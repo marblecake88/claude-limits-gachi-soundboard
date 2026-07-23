@@ -27,4 +27,4 @@
 
 ## скрины
 
-добавлю
+<img src="docs/board.png" width="300"> <img src="docs/limits.png" width="300">
