@@ -1,5 +1,12 @@
 # claude limits gachi soundboard
 
+[![release](https://img.shields.io/github/v/release/marblecake88/claude-limits-gachi-soundboard)](https://github.com/marblecake88/claude-limits-gachi-soundboard/releases)
+[![downloads](https://img.shields.io/github/downloads/marblecake88/claude-limits-gachi-soundboard/total)](https://github.com/marblecake88/claude-limits-gachi-soundboard/releases)
+[![license](https://img.shields.io/github/license/marblecake88/claude-limits-gachi-soundboard)](LICENSE)
+![macos](https://img.shields.io/badge/macos-11%2B-black)
+
+[English below](#english)
+
 Гачи-саундборд в строке меню макоса. Заодно показывает лимиты Claude Code и умеет
 будить Claude ночью, чтобы к твоему пробуждению у тебя было 99% 5часового лимита и час до закрытия окна.
 
@@ -29,3 +36,39 @@
 
 нужен только xcode command line tools, зависимостей нет.
 
+## лицензия
+
+код под MIT, звуки принадлежат их авторам.
+
+---
+
+## English
+
+Gachi soundboard for the macOS menu bar. It also shows your Claude Code limits and wakes
+Claude overnight so by the time you wake up you have 99% of the 5-hour limit and an hour before the window closes.
+
+### what it does
+
+- soundboard: click the cat for a random gachi, or tap a specific one on the grid
+- Claude limits right in the menu bar: 5-hour window, weekly, time to reset
+- keep-alive: starts a claude-code window at the set time, so by your hour you have 99% of the limit
+  and an hour before it closes. you start at 8, set it to 9
+- spend in dollars at API rates, computed locally from transcripts
+
+The menu bar always shows limits. Click opens the board, limits are the second screen.
+Once you open limits, next time it opens straight to them.
+
+### install
+
+grab LimitNotifier.zip from [releases](https://github.com/marblecake88/claude-limits-gachi-soundboard/releases), unzip, drag to /Applications.
+you need Claude Code installed and logged in, the numbers come from it.
+
+### build
+
+    ./make-app.sh release install
+
+only xcode command line tools, no dependencies.
+
+### license
+
+code is MIT, sounds belong to their authors.
