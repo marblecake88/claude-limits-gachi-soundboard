@@ -14,6 +14,10 @@
 Строка меню всегда показывает лимиты. По клику открывается борд, лимиты вторым
 экраном. Зайдёшь в лимиты хоть раз, дальше открывается сразу на них.
 
+## скрины
+
+<img src="docs/board.png" width="300"> <img src="docs/limits.png" width="300">
+
 ## поставить
 
 взять LimitNotifier.zip из релизов, распаковать, перетащить в /Applications.
@@ -25,6 +29,3 @@
 
 нужен только xcode command line tools, зависимостей нет.
 
-## скрины
-
-<img src="docs/board.png" width="300"> <img src="docs/limits.png" width="300">
