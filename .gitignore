@@ -1,0 +1,18 @@
+.DS_Store
+.build/
+build/
+
+
+# приватный ключ к Developer ID: в репозиторий не кладём никогда
+signing/*.key
+signing/*.p12
+
+# превью кошки, рабочий файл
+cat-preview.html
+
+# сырая фотка-исходник кошки, в деле только Resources/cat.png
+*.jpeg
+
+notary.env
+board-ui.html
+cat-preview.html
