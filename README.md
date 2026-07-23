@@ -20,7 +20,7 @@
 
 ## поставить
 
-взять LimitNotifier.zip из релизов, распаковать, перетащить в /Applications.
+взять LimitNotifier.zip из [релизов](https://github.com/marblecake88/claude-limits-gachi-soundboard/releases), распаковать, перетащить в /Applications.
 нужен установленный и залогиненный Claude Code, цифры берутся из него.
 
 ## собрать самому
