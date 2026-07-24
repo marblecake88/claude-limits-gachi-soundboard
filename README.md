@@ -42,6 +42,20 @@ trust нужен один раз, свежий homebrew иначе не груз
 нужен macos 14 и установленный залогиненный Claude Code, цифры берутся из него.
 когда выходит новая версия, приложение само пишет об этом в углу панели.
 
+## обновить без brew
+
+если brew не стоит, обновление одной пачкой в терминале:
+
+    pkill -f LimitNotifier.app
+    cd ~/Downloads
+    curl -L -o LimitNotifier.zip https://github.com/marblecake88/claude-limits-gachi-soundboard/releases/latest/download/LimitNotifier.zip
+    unzip -oq LimitNotifier.zip
+    rm -rf /Applications/LimitNotifier.app
+    mv LimitNotifier.app /Applications/
+    open /Applications/LimitNotifier.app
+
+настройки лежат отдельно и переустановку переживают. ссылка всегда ведёт на свежий релиз.
+
 ## собрать самому
 
     ./make-app.sh release install
@@ -86,6 +100,20 @@ or by hand: grab LimitNotifier.zip from [releases](https://github.com/marblecake
 
 needs macos 14 and Claude Code installed and logged in, the numbers come from it.
 when a new version ships, the app says so in the corner of the panel.
+
+### update without brew
+
+no brew, no problem, one paste in the terminal:
+
+    pkill -f LimitNotifier.app
+    cd ~/Downloads
+    curl -L -o LimitNotifier.zip https://github.com/marblecake88/claude-limits-gachi-soundboard/releases/latest/download/LimitNotifier.zip
+    unzip -oq LimitNotifier.zip
+    rm -rf /Applications/LimitNotifier.app
+    mv LimitNotifier.app /Applications/
+    open /Applications/LimitNotifier.app
+
+settings live elsewhere and survive the reinstall. the link always points at the newest release.
 
 ### build
 
