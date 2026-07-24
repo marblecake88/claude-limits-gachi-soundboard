@@ -88,11 +88,20 @@ struct PanelView: View {
     var body: some View {
         Group {
             switch model.screen {
-            case .board:  boardScreen()
-            case .limits: limitsScreen(now: Date())
+            case .board:
+                boardScreen().frame(width: 300, alignment: .leading)
+            case .limits:
+                // Разъезжаемся только вширь: панель лимитов слева остаётся
+                // ровно такой же, статистика пристраивается справа.
+                HStack(alignment: .top, spacing: 0) {
+                    limitsScreen(now: Date()).frame(width: 300, alignment: .leading)
+                    if model.statsOpen {
+                        Divider().overlay(Palette.line)
+                        StatsPane(model: model).frame(width: 452, alignment: .leading)
+                    }
+                }
             }
         }
-        .frame(width: 300, alignment: .leading)
         .background(Palette.bg)
     }
 
@@ -183,19 +192,31 @@ struct PanelView: View {
 
     // MARK: Шапка лимитов (с кнопкой назад на борд)
 
+    /// Назад слева, остаток по центру, разворот статистики справа.
+    /// Крайние колонки равной ширины, иначе центр уезжает вслед за длиной кнопки.
     private func header(now: Date) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
             Button(action: { model.showBoard() }) {
                 Text("‹ BOARD")
                     .font(Metrics.font).tracking(Metrics.trackFoot)
                     .foregroundStyle(Palette.accent)
             }
             .buttonStyle(.plain)
-            Spacer(minLength: 8)
+            .frame(width: 62, alignment: .leading)
+
             headerReset(now: now)
                 .font(Metrics.font)
                 .monospacedDigit()
                 .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .center)
+
+            Button(action: { model.toggleStats() }) {
+                Text(model.statsOpen ? "STATS ‹" : "STATS ⤢")
+                    .font(Metrics.font).tracking(Metrics.trackFoot)
+                    .foregroundStyle(Palette.accent)
+            }
+            .buttonStyle(.plain)
+            .frame(width: 62, alignment: .trailing)
         }
         .padding(.bottom, 10)
     }
@@ -248,9 +269,10 @@ struct PanelView: View {
         VStack(alignment: .leading, spacing: 0) {
             ConfigRow(key: "Today", value: fmtMoney(model.spend.today))
             ConfigRow(key: "Last 7 days", value: fmtMoney(model.spend.week))
-            Note("Клауде хочет чтоб вы думали что тратите именно столько")
+            Note(L.s("Клауде хочет чтоб вы думали что тратите именно столько",
+                     "Claude wants you to think this is what you spend"))
             if !model.spend.unknownModels.isEmpty {
-                Note("Нет цены: \(model.spend.unknownModels.joined(separator: ", "))")
+                Note(L.s("Нет цены: ", "No price: ") + model.spend.unknownModels.joined(separator: ", "))
             }
         }
     }
@@ -336,7 +358,7 @@ private struct CatButton: View {
                         .animation(.spring(response: 0.28, dampingFraction: 0.45), value: scale)
                 }
                 .buttonStyle(.plain)
-                .help("случайный звук")
+                .help(L.s("случайный звук", "random sound"))
             }
             Text("RANDOM")
                 .font(.system(size: 10, design: .monospaced))
@@ -390,7 +412,7 @@ private struct LimitsChip: View {
             .overlay(RoundedRectangle(cornerRadius: 7).stroke(Palette.line, lineWidth: 1))
         }
         .buttonStyle(.plain)
-        .help("лимиты Клауде")
+        .help(L.s("лимиты Клауде", "Claude limits"))
     }
 
     private func color(_ level: Level) -> Color {
@@ -423,7 +445,8 @@ private struct SettingsBlock: View {
                 Spacer(minLength: 8)
                 Switch(isOn: Binding(get: { settings.keepAliveEnabled }, set: onKeepAlive))
             }
-            Note("Утром к нужному часу будет окно с 99% лимита. Работаете с 8, ставьте 9")
+            Note(L.s("Утром к нужному часу будет окно с 99% лимита. Работаете с 8, ставьте 9",
+                     "By your hour the window will have 99% of the limit left. Start at 8, set 9"))
 
             Spacer().frame(height: 9)
 
@@ -444,7 +467,8 @@ private struct SettingsBlock: View {
             // Будилка без keep-alive бессмысленна: будить некого.
             .disabled(!settings.keepAliveEnabled)
             .opacity(settings.keepAliveEnabled ? 1 : 0.45)
-            Note("Нужна, если закрываете мак на ночь")
+            Note(L.s("Нужна, если закрываете мак на ночь",
+                     "Needed if you close the mac overnight"))
         }
     }
 

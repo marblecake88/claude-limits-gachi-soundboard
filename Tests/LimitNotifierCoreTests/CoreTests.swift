@@ -279,7 +279,30 @@ struct ParseTests {
         #expect(UsageError.notLoggedIn.isTransient == false)
         #expect(UsageError.claudeNotFound.isTransient == false)
         // Текст про прошлые цифры важен: это не поломка, а неполные данные.
+        // Язык берём явно, иначе тест зависел бы от локали машины.
+        let was = L.lang
+        defer { L.lang = was }
+        L.lang = .ru
         #expect(UsageError.noLimits("").hint.contains("прошлые"))
+        L.lang = .en
+        #expect(UsageError.noLimits("").hint.contains("last numbers"))
+    }
+
+    @Test("Перевод есть у каждой подсказки, и он не совпадает с русским")
+    func everyHintTranslated() {
+        let was = L.lang
+        defer { L.lang = was }
+        let cases: [UsageError] = [.claudeNotFound, .notLoggedIn, .noLimits(""), .timedOut,
+                                   .launchFailed("boom")]
+        for e in cases {
+            L.lang = .ru; let ru = e.hint
+            L.lang = .en; let en = e.hint
+            #expect(!ru.isEmpty && !en.isEmpty)
+            #expect(ru != en, "подсказка без перевода: \(ru)")
+            // Забытый перевод виден по кириллице в английской ветке.
+            #expect(en.range(of: "\\p{Cyrillic}", options: .regularExpression) == nil,
+                    "кириллица в английском тексте: \(en)")
+        }
     }
 
     @Test("Разные формулировки logged out распознаются")
@@ -773,3 +796,117 @@ struct PollPlanTests {
     }
 }
 
+
+// MARK: - Статистика использования
+
+@Suite("Статистика")
+struct StatsTests {
+
+    private func cal() -> Calendar {
+        var c = Calendar(identifier: .gregorian)
+        c.timeZone = TimeZone(secondsFromGMT: 3 * 3600)!
+        c.locale = Locale(identifier: "en_US_POSIX")
+        return c
+    }
+
+    /// Имена моделей идут в подписи графика, поэтому важно, чтоб из id
+    /// вычищались дата и пометка контекста.
+    @Test("Короткие имена моделей")
+    func names() {
+        #expect(StatsScanner.shortName("claude-opus-4-8") == "Opus 4.8")
+        #expect(StatsScanner.shortName("claude-fable-5") == "Fable 5")
+        #expect(StatsScanner.shortName("claude-haiku-4-5-20251001") == "Haiku 4.5")
+        #expect(StatsScanner.shortName("claude-opus-5[1m]") == "Opus 5")
+    }
+
+    @Test("Стрик считается по подряд идущим дням")
+    func streaks() {
+        let now = StatsSlicer.isoDate("2026-07-24")!
+        // Три дня подряд вплотную к сегодняшнему: стрик живой.
+        let live = StatsScanner.streaks(["2026-07-22", "2026-07-23", "2026-07-24"],
+                                        now: now, calendar: cal())
+        #expect(live.best == 3)
+        #expect(live.current == 3)
+        // Разрыв в середине: лучший остаётся, текущий считается с разрыва.
+        let broken = StatsScanner.streaks(["2026-07-01", "2026-07-02", "2026-07-03",
+                                           "2026-07-23", "2026-07-24"],
+                                          now: now, calendar: cal())
+        #expect(broken.best == 3)
+        #expect(broken.current == 2)
+        // Давно не работали: текущий стрик обнуляется, а не висит вечно.
+        let stale = StatsScanner.streaks(["2026-07-01", "2026-07-02"], now: now, calendar: cal())
+        #expect(stale.best == 2)
+        #expect(stale.current == 0)
+        #expect(StatsScanner.streaks([], now: now, calendar: cal()) == (0, 0))
+    }
+
+    private func sample() -> UsageStats {
+        var days: [String: [String: Int]] = [:]
+        // 70 дней подряд, чтобы проверить свёртку в недели.
+        for i in 0..<70 {
+            let date = StatsSlicer.isoDate("2026-07-24")!.addingTimeInterval(-Double(i) * 86400)
+            days[StatsSlicer.isoString(date)] = ["Opus 4.8": 1000 + i, "Fable 5": 10]
+        }
+        days["2026-07-24"] = ["Opus 4.8": 90_000]          // рекордный день
+        return UsageStats(days: days, hours: ["21": ["Opus 5": 500], "07": ["Opus 4.8": 100]],
+                          requests: ["2026-07-24": 42], transcripts: 7,
+                          bestStreak: 70, currentStreak: 70,
+                          scannedAt: StatsSlicer.isoDate("2026-07-24")!)
+    }
+
+    @Test("Периоды режут нужное число дней")
+    func periods() {
+        let stats = sample(), now = StatsSlicer.isoDate("2026-07-24")!
+        let week = StatsSlicer.slice(stats, period: .week, now: now, calendar: cal())
+        #expect(week.columns.count == 7)
+        let month = StatsSlicer.slice(stats, period: .month, now: now, calendar: cal())
+        #expect(month.columns.count == 30)
+        // Сегодня рисуем по часам, иначе это один столбик на весь экран.
+        let today = StatsSlicer.slice(stats, period: .today, now: now, calendar: cal())
+        #expect(today.columns.count == 2)
+        #expect(today.columns.map(\.id) == ["07", "21"])
+        #expect(today.title.contains("ЧАС") || today.title.uppercased().contains("HOUR"))
+    }
+
+    /// 70 столбиков в панель не влезают, поэтому длинный период сворачивается.
+    @Test("Длинный период сворачивается в недели")
+    func folding() {
+        let stats = sample(), now = StatsSlicer.isoDate("2026-07-24")!
+        let all = StatsSlicer.slice(stats, period: .all, now: now, calendar: cal())
+        #expect(stats.activeDays == 70)
+        #expect(all.columns.count <= StatsSlicer.maxColumns)
+        #expect(all.columns.count == 11)
+        // Свёртка ничего не теряет: сумма та же, что по дням.
+        let byDay = stats.days.values.flatMap { $0.values }.reduce(0, +)
+        #expect(all.total == byDay)
+    }
+
+    @Test("Модели упорядочены по расходу, суммы сходятся")
+    func models() {
+        let stats = sample(), now = StatsSlicer.isoDate("2026-07-24")!
+        let week = StatsSlicer.slice(stats, period: .week, now: now, calendar: cal())
+        #expect(week.models.first == "Opus 4.8")
+        #expect(week.models.last == "Fable 5")
+        #expect(week.total == week.modelTotals.values.reduce(0, +))
+    }
+
+    @Test("Рекордный день находится по сумме за день")
+    func busiest() {
+        let stats = sample()
+        #expect(stats.busiestDay == "2026-07-24")
+        #expect(stats.total(of: "2026-07-24") == 90_000)
+        #expect(UsageStats.empty.busiestDay == nil)
+        #expect(UsageStats.empty.isEmpty)
+    }
+
+    @Test("Пустая статистика не роняет нарезку")
+    func emptySlice() {
+        let now = StatsSlicer.isoDate("2026-07-24")!
+        for period in StatsPeriod.allCases {
+            let s = StatsSlicer.slice(.empty, period: period, now: now, calendar: cal())
+            #expect(s.columns.isEmpty)
+            #expect(s.total == 0)
+            #expect(s.models.isEmpty)
+        }
+    }
+}

@@ -100,15 +100,18 @@ public enum UsageError: Error, Sendable, Equatable {
     public var hint: String {
         switch self {
         case .claudeNotFound:
-            return "Не нашёл claude. Установи Claude Code."
+            return L.s("Не нашёл claude. Установи Claude Code.",
+                       "Can't find claude. Install Claude Code.")
         case .notLoggedIn:
-            return "Claude Code не залогинен. Запусти claude и войди."
+            return L.s("Claude Code не залогинен. Запусти claude и войди.",
+                       "Claude Code is logged out. Run claude and sign in.")
         case .noLimits:
-            return "Claude не отдаёт лимиты, похоже режет частоту. Показываю прошлые цифры и жду."
+            return L.s("Claude не отдаёт лимиты, похоже режет частоту. Показываю прошлые цифры и жду.",
+                       "Claude isn't returning limits, looks rate limited. Showing the last numbers.")
         case .timedOut:
-            return "claude не ответил вовремя."
+            return L.s("claude не ответил вовремя.", "claude didn't answer in time.")
         case .launchFailed(let m):
-            return "Не смог опросить claude. \(m)"
+            return L.s("Не смог опросить claude. \(m)", "Couldn't ask claude. \(m)")
         }
     }
 
@@ -206,6 +209,14 @@ public enum StatusBar {
 // MARK: - Форматирование времени
 
 public enum Fmt {
+    /// "35.9m", "512k", "842". Токенов бывают миллионы, полное число в узкой
+    /// колонке не читается и ломает вёрстку.
+    public static func tokens(_ n: Int) -> String {
+        if n >= 1_000_000 { return String(format: "%.1fm", Double(n) / 1_000_000) }
+        if n >= 1_000 { return "\(Int((Double(n) / 1000).rounded()))k" }
+        return "\(n)"
+    }
+
     /// "1h 47m", "4d 6h", "12m". Для прошедшего времени возвращает "now".
     public static func until(_ date: Date, from now: Date = Date()) -> String {
         let s = Int(date.timeIntervalSince(now))

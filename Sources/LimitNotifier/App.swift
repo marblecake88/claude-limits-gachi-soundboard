@@ -52,27 +52,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             line.append(NSAttributedString(string: text,
                                            attributes: [.font: font, .foregroundColor: color]))
         }
-        // Полупрозрачные системные оттенки (secondary/tertiary) на светлом
-        // таскбаре сливаются с фоном: они белые с альфой, а обои под меню-баром
-        // светлые, и счётчика времени просто не видно. Берём непрозрачный
-        // labelColor, он сам переключается между чёрным и белым по теме.
         add(p.session, Self.color(p.sessionLevel))
-        add("/", .labelColor)
+        add("/", Self.separator)
         add(p.weekly, Self.color(p.weeklyLevel))
-        add("/", .labelColor)
-        add(p.time, .labelColor)
+        add("/", Self.separator)
+        add(p.time, Self.timeColor)
 
         statusItem?.button?.attributedTitle = line
     }
 
-    /// Пороги: до 60 обычный цвет, 60 жёлтый, 79 розовый, 89 красный.
+    /// Пороги: до 60 зелёный как гейджи в панели, 60 жёлтый, 79 розовый, 89 красный.
     private static func color(_ level: Level) -> NSColor {
         switch level {
-        case .calm:   return .labelColor
-        case .yellow: return .systemYellow
-        case .pink:   return .systemPink
-        case .red:    return .systemRed
+        case .calm:   return calm
+        case .yellow: return adaptive(dark: rgb(1.00, 0.85, 0.35), light: rgb(0.72, 0.50, 0.00))
+        case .pink:   return adaptive(dark: rgb(1.00, 0.53, 0.68), light: rgb(0.84, 0.13, 0.35))
+        case .red:    return adaptive(dark: rgb(1.00, 0.46, 0.42), light: rgb(0.78, 0.11, 0.07))
         }
+    }
+
+    /// Спокойная зона: тот же мятный, что у гейджей в панели, но посветлее,
+    /// чтоб цифры не тонули в тёмном меню-баре. На светлом фоне светлый мятный
+    /// выцветает, поэтому там зелёный поплотнее.
+    private static let calm = adaptive(dark: rgb(0.52, 0.96, 0.87),
+                                       light: rgb(0.03, 0.55, 0.45))
+
+    /// Время до сброса: заметно тише цифр, но непрозрачное. Полупрозрачные
+    /// оттенки на светлом таскбаре сливались с обоями и счётчик пропадал.
+    private static let timeColor = adaptive(dark: rgb(0.62, 0.62, 0.66),
+                                            light: rgb(0.38, 0.38, 0.42))
+
+    /// Разделители ещё тише времени: это просто риски между числами.
+    private static let separator = adaptive(dark: rgb(0.44, 0.44, 0.48),
+                                            light: rgb(0.56, 0.56, 0.60))
+
+    /// Цвет, свой для светлой и тёмной темы. Считается в момент отрисовки, так
+    /// что переключение темы подхватывается само.
+    private static func adaptive(dark: NSColor, light: NSColor) -> NSColor {
+        NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light
+        }
+    }
+
+    private static func rgb(_ r: CGFloat, _ g: CGFloat, _ b: CGFloat) -> NSColor {
+        NSColor(srgbRed: r, green: g, blue: b, alpha: 1)
     }
 
     @objc private func togglePanel() {
@@ -96,7 +119,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var snapshot: UsageSnapshot?
     @Published private(set) var lastError: UsageError?
     @Published private(set) var isRefreshing = false
-    @Published private(set) var nextPingText = "выключено"
+    @Published private(set) var nextPingText = L.s("выключено", "off")
     /// Версия из последнего релиза, если она новее нашей. Иначе nil.
     @Published private(set) var updateVersion: String?
 
@@ -135,6 +158,40 @@ final class AppModel: ObservableObject {
     @Published private(set) var spend = Spend.empty
     private var scanning = false
 
+    // MARK: - Статистика
+
+    @Published private(set) var stats = UsageStats.empty
+    @Published private(set) var statsScanning = false
+    @Published private(set) var statsOpen = false
+    @Published private(set) var statsPeriod: StatsPeriod = .all
+
+    func toggleStats() {
+        statsOpen.toggle()
+        if statsOpen { rescanStats() }
+    }
+
+    func setStatsPeriod(_ period: StatsPeriod) { statsPeriod = period }
+
+    /// Полный проход по транскриптам заметно дороже скана трат: тот берёт
+    /// только неделю, а этому нужна вся история. Поэтому считаем лениво, при
+    /// открытии статистики, и не чаще раза в 10 минут.
+    private func rescanStats(force: Bool = false) {
+        guard !statsScanning else { return }
+        guard force || Date().timeIntervalSince(stats.scannedAt) > 600 else { return }
+        statsScanning = true
+        Task.detached(priority: .utility) {
+            let started = Date()
+            let result = StatsScanner.scan()
+            let ms = Int(Date().timeIntervalSince(started) * 1000)
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                self.stats = result
+                self.statsScanning = false
+                Log.write("stats scan: \(result.activeDays) дней, \(result.transcripts) записей, \(ms)ms")
+            }
+        }
+    }
+
     /// Скан транскриптов на фоне. Не чаще раза в 5 минут: он читает диск, а
     /// цифра за сутки от лишней точности не выигрывает.
     func rescanSpend(force: Bool = false) {
@@ -152,7 +209,7 @@ final class AppModel: ObservableObject {
                 var line = String(format: "cost scan: today $%.2f, week $%.2f, %dms",
                                   result.today, result.week, ms)
                 if !result.unknownModels.isEmpty {
-                    line += ", без цены: \(result.unknownModels.joined(separator: " "))"
+                    line += ", без цены: " + result.unknownModels.joined(separator: " ")
                 }
                 Log.write(line)
             }
@@ -389,7 +446,7 @@ final class AppModel: ObservableObject {
     private func rescheduleKeepAlive() {
         keepAliveTask?.cancel()
         guard settings.keepAliveEnabled else {
-            nextPingText = "выключено"
+            nextPingText = L.s("выключено", "off")
             return
         }
         let ping = Anchor.nextPing(anchorHour: settings.anchorHour,
@@ -397,7 +454,7 @@ final class AppModel: ObservableObject {
                                    from: Date())
         let hhmm = DateFormatter()
         hhmm.dateFormat = "HH:mm"
-        nextPingText = "\(hhmm.string(from: ping)), через \(Fmt.until(ping))"
+        nextPingText = hhmm.string(from: ping) + L.s(", через ", ", in ") + Fmt.until(ping)
 
         keepAliveTask = Task { [weak self] in
             let delay = ping.timeIntervalSinceNow

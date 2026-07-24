@@ -164,25 +164,25 @@ public enum CostScanner {
             + int(usage["cache_read_input_tokens"]) > 0
     }
 
-    private static func int(_ any: Any?) -> Int {
+    static func int(_ any: Any?) -> Int {
         (any as? Int) ?? Int((any as? Double) ?? 0)
     }
 
-    private static let isoParser: ISO8601DateFormatter = {
+    static let isoParser: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return f
     }()
 
-    private static let isoPlain = ISO8601DateFormatter()
+    static let isoPlain = ISO8601DateFormatter()
 
-    private static func iso(_ s: String) -> Date? {
+    static func iso(_ s: String) -> Date? {
         isoParser.date(from: s) ?? isoPlain.date(from: s)
     }
 
     /// Построчное чтение кусками по мегабайту: файлы бывают на десятки
     /// мегабайт, целиком в память их тянуть не надо.
-    private static func forEachLine(of url: URL, _ body: (String) -> Void) {
+    static func forEachLine(of url: URL, _ body: (String) -> Void) {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return }
         defer { try? handle.close() }
 
