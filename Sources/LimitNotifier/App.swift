@@ -37,9 +37,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         observer = model.objectWillChange.sink { [weak self] _ in
             // objectWillChange приходит до записи значения, поэтому
             // перерисовываем на следующем витке цикла.
-            DispatchQueue.main.async { self?.redraw() }
+            DispatchQueue.main.async {
+                self?.redraw()
+                self?.keepOnScreen()
+            }
         }
         redraw()
+    }
+
+    /// Не даём развёрнутой панели уехать за правый край экрана.
+    ///
+    /// Попап центрируется по иконке в строке меню, а она обычно у правого края:
+    /// узкая панель влезает, а со статистикой вылезает наружу. Двигаем окно
+    /// целиком, сдвигая точку привязки влево.
+    private func keepOnScreen() {
+        guard let button = statusItem?.button, let popover, popover.isShown,
+              let window = button.window, let screen = window.screen else { return }
+
+        let onScreen = window.convertToScreen(button.convert(button.bounds, to: nil))
+        let shift = PopoverFit.shift(center: onScreen.midX,
+                                     width: PanelSize.total(statsOpen: model.statsOpen),
+                                     screenMinX: screen.visibleFrame.minX,
+                                     screenMaxX: screen.visibleFrame.maxX)
+        let wanted = button.bounds.offsetBy(dx: -shift, dy: 0)
+        // Присваивание дёргает перерисовку попапа, поэтому только при разнице.
+        if abs(popover.positioningRect.origin.x - wanted.origin.x) > 0.5 {
+            popover.positioningRect = wanted
+        }
     }
 
     /// Строка вида 55/78/2h15, каждое число своим цветом.
@@ -172,6 +196,17 @@ final class AppModel: ObservableObject {
 
     func setStatsPeriod(_ period: StatsPeriod) { statsPeriod = period }
 
+    /// Переключение языка на лету. Строки собираются при отрисовке, поэтому
+    /// достаточно дёрнуть перерисовку, а вот уже посчитанный текст следующего
+    /// пинга приходится пересобрать руками.
+    func setLanguage(_ lang: L.Lang) {
+        guard L.lang != lang else { return }
+        L.lang = lang
+        settings.language = lang
+        objectWillChange.send()
+        rescheduleKeepAlive()
+    }
+
     /// Полный проход по транскриптам заметно дороже скана трат: тот берёт
     /// только неделю, а этому нужна вся история. Поэтому считаем лениво, при
     /// открытии статистики, и не чаще раза в 10 минут.
@@ -224,6 +259,9 @@ final class AppModel: ObservableObject {
 
 
     init() {
+        // Язык применяем до первой отрисовки: иначе панель успеет собраться
+        // на системном, а сохранённый выбор подхватится только со второго раза.
+        if let saved = settings.language { L.lang = saved }
         Log.trim()
         Log.write("app started")
         startPolling()

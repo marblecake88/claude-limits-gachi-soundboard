@@ -262,3 +262,25 @@ public enum PollPlan {
         min((previous ?? 450) * 2, 3600)
     }
 }
+
+// MARK: - Попап у края экрана
+
+/// Насколько сдвинуть попап, чтоб он не уехал за край экрана.
+///
+/// Попап центрируется по иконке в строке меню, а иконка часто у правого края.
+/// Пока панель узкая, это незаметно, но развёрнутая статистика вылезает за
+/// экран. Двигаем окно целиком: стрелка перестаёт смотреть точно в иконку,
+/// зато видно всё содержимое.
+public enum PopoverFit {
+    /// Возвращает сдвиг влево в точках (0, если и так помещается).
+    public static func shift(center: Double, width: Double,
+                             screenMinX: Double, screenMaxX: Double,
+                             margin: Double = 8) -> Double {
+        let overflowRight = (center + width / 2) - (screenMaxX - margin)
+        guard overflowRight > 0 else { return 0 }
+        // Влево дальше, чем позволяет левый край, не уезжаем: иначе спрячем
+        // начало панели вместо конца.
+        let roomOnLeft = (center - width / 2) - (screenMinX + margin)
+        return max(0, min(overflowRight, max(0, roomOnLeft) + overflowRight))
+    }
+}

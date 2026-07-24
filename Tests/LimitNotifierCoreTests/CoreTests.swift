@@ -910,3 +910,48 @@ struct StatsTests {
         }
     }
 }
+
+// MARK: - Попап у края экрана
+
+@Suite("Попап не уезжает за экран")
+struct PopoverFitTests {
+
+    /// Экран 1440 точек шириной, панель 300, развёрнутая 753.
+    private let screen = (min: 0.0, max: 1440.0)
+
+    @Test("Узкая панель у края помещается сама")
+    func narrowFits() {
+        #expect(PopoverFit.shift(center: 1380, width: 300,
+                                 screenMinX: screen.min, screenMaxX: screen.max) > 0)
+        // По центру экрана двигать нечего.
+        #expect(PopoverFit.shift(center: 720, width: 300,
+                                 screenMinX: screen.min, screenMaxX: screen.max) == 0)
+    }
+
+    /// Главный случай: иконка у правого края, развернули статистику.
+    @Test("Развёрнутая панель у правого края сдвигается ровно настолько, чтоб влезть")
+    func wideNearRightEdge() {
+        let shift = PopoverFit.shift(center: 1380, width: 753,
+                                     screenMinX: screen.min, screenMaxX: screen.max, margin: 8)
+        // Правый край был 1380 + 376.5 = 1756.5, должен стать 1432.
+        #expect(abs(shift - 324.5) < 0.01)
+        let right = 1380 + 753 / 2 - shift
+        #expect(right <= screen.max - 8 + 0.01)
+    }
+
+    @Test("Если и так помещается, не двигаем")
+    func noShiftWhenFits() {
+        #expect(PopoverFit.shift(center: 700, width: 753,
+                                 screenMinX: screen.min, screenMaxX: screen.max) == 0)
+    }
+
+    /// Экран уже панели: двигать некуда, но и уводить левый край в минус
+    /// бессмысленно, там спрячется начало панели.
+    @Test("Панель шире экрана не уезжает влево бесконечно")
+    func absurdlyNarrowScreen() {
+        let shift = PopoverFit.shift(center: 400, width: 900,
+                                     screenMinX: 0, screenMaxX: 800)
+        #expect(shift >= 0)
+        #expect(shift.isFinite)
+    }
+}

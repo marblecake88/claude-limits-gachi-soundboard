@@ -1,6 +1,6 @@
 # claude limits gachi soundboard
 
-[![release](https://img.shields.io/badge/release-v1.2-ff598c)](https://github.com/marblecake88/claude-limits-gachi-soundboard/releases)
+[![release](https://img.shields.io/badge/release-v1.2.1-ff598c)](https://github.com/marblecake88/claude-limits-gachi-soundboard/releases)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 ![macos](https://img.shields.io/badge/macos-14%2B-black)
 ![swift](https://img.shields.io/badge/swift-6-f05138)
@@ -19,7 +19,7 @@
 - трата в долларах по тарифам API, считается локально из транскриптов
 - статистика: жмёшь STATS в панели лимитов, окно разъезжается вправо. токены по дням,
   активность, модели, стрики. периоды сегодня/неделя/месяц/всё
-- интерфейс на английском, если система не русская
+- интерфейс на английском, если система не русская. переключатель RU/EN в панели
 
 Строка меню всегда показывает лимиты. По клику открывается борд, лимиты вторым
 экраном. Зайдёшь в лимиты хоть раз, дальше открывается сразу на них.
@@ -68,7 +68,7 @@ Claude overnight so by the time you wake up you have 99% of the 5-hour limit and
 - spend in dollars at API rates, computed locally from transcripts
 - statistics: hit STATS on the limits panel and the window expands to the right — tokens per day,
   activity, models, streaks. today / week / month / all time
-- the UI is English unless your system is Russian
+- the UI is English unless your system is Russian, with an RU/EN switch in the panel
 
 The menu bar always shows limits. Click opens the board, limits are the second screen.
 Once you open limits, next time it opens straight to them.

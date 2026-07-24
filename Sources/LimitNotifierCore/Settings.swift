@@ -20,10 +20,31 @@ public final class Settings: ObservableObject {
         static let keepAlive = "keepAliveEnabled"
         static let wakeMac = "wakeMacEnabled"
         static let visitedLimits = "visitedLimits"
+        static let language = "language"
     }
 
     @Published public var version = 0
     private func bump() { version &+= 1 }
+
+    /// Выбранный язык интерфейса. nil значит "как в системе": пока человек сам
+    /// не переключил, слушаемся системного языка, а не запоминаем его навсегда.
+    public var language: L.Lang? {
+        get {
+            switch defaults.string(forKey: Keys.language) {
+            case "ru": return .ru
+            case "en": return .en
+            default: return nil
+            }
+        }
+        set {
+            switch newValue {
+            case .ru: defaults.set("ru", forKey: Keys.language)
+            case .en: defaults.set("en", forKey: Keys.language)
+            case nil: defaults.removeObject(forKey: Keys.language)
+            }
+            bump()
+        }
+    }
 
     public var keepAliveEnabled: Bool {
         get { defaults.bool(forKey: Keys.keepAlive) }

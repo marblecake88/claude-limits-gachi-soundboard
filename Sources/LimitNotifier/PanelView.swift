@@ -80,6 +80,19 @@ private func hhmm(_ date: Date, calendar: Calendar = .current) -> String {
     return String(format: "%02d:%02d", c.hour ?? 0, c.minute ?? 0)
 }
 
+// MARK: - Размеры панели
+
+/// Ширины в одном месте: их знает и вёрстка, и код, который держит попап
+/// в пределах экрана.
+enum PanelSize {
+    static let limits: CGFloat = 300
+    static let stats: CGFloat = 452
+
+    static func total(statsOpen: Bool) -> CGFloat {
+        statsOpen ? limits + 1 + stats : limits   // +1 это разделитель
+    }
+}
+
 // MARK: - Панель
 
 struct PanelView: View {
@@ -89,15 +102,17 @@ struct PanelView: View {
         Group {
             switch model.screen {
             case .board:
-                boardScreen().frame(width: 300, alignment: .leading)
+                boardScreen().frame(width: PanelSize.limits, alignment: .leading)
             case .limits:
                 // Разъезжаемся только вширь: панель лимитов слева остаётся
                 // ровно такой же, статистика пристраивается справа.
                 HStack(alignment: .top, spacing: 0) {
-                    limitsScreen(now: Date()).frame(width: 300, alignment: .leading)
+                    limitsScreen(now: Date())
+                        .frame(width: PanelSize.limits, alignment: .leading)
                     if model.statsOpen {
                         Divider().overlay(Palette.line)
-                        StatsPane(model: model).frame(width: 452, alignment: .leading)
+                        StatsPane(model: model)
+                            .frame(width: PanelSize.stats, alignment: .leading)
                     }
                 }
             }
@@ -184,6 +199,7 @@ struct PanelView: View {
             Sep()
 
             loginRow()
+            languageRow()
 
             footer()
         }
@@ -289,6 +305,33 @@ struct PanelView: View {
                 get: { model.startAtLogin },
                 set: { model.setStartAtLogin($0) }
             ))
+        }
+    }
+
+    // MARK: Язык
+
+    /// По умолчанию берём язык системы, но оставляем переключатель: у людей
+    /// система бывает английская, а привычка читать по-русски остаётся.
+    private func languageRow() -> some View {
+        RowShell {
+            RowKey(L.s("Язык", "Language"))
+            Spacer(minLength: 8)
+            HStack(spacing: 5) {
+                ForEach([L.Lang.ru, L.Lang.en], id: \.self) { lang in
+                    Button(action: { model.setLanguage(lang) }) {
+                        Text(lang == .ru ? "RU" : "EN")
+                            .font(Metrics.font).tracking(Metrics.trackFoot)
+                            .foregroundStyle(L.lang == lang ? Palette.value : Palette.faint)
+                            .padding(.horizontal, 7).padding(.vertical, 2)
+                            .background(RoundedRectangle(cornerRadius: 6)
+                                .fill(L.lang == lang ? Palette.fieldBg : .clear))
+                            .overlay(RoundedRectangle(cornerRadius: 6)
+                                .stroke(L.lang == lang ? Palette.fieldLine : Palette.line,
+                                        lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
         }
     }
 
