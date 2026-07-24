@@ -29,7 +29,10 @@
 
 через brew:
 
+    brew trust marblecake88/tap
     brew install --cask marblecake88/tap/claude-limits-gachi-soundboard
+
+trust нужен один раз, свежий homebrew иначе не грузит каски из сторонних тапов.
 
 или руками: взять LimitNotifier.zip из [релизов](https://github.com/marblecake88/claude-limits-gachi-soundboard/releases), распаковать, перетащить в /Applications.
 
@@ -68,7 +71,10 @@ Once you open limits, next time it opens straight to them.
 
 via brew:
 
+    brew trust marblecake88/tap
     brew install --cask marblecake88/tap/claude-limits-gachi-soundboard
+
+trust is a one-time thing, recent homebrew won't load casks from third-party taps otherwise.
 
 or by hand: grab LimitNotifier.zip from [releases](https://github.com/marblecake88/claude-limits-gachi-soundboard/releases), unzip, drag to /Applications.
 
