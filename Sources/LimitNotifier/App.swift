@@ -64,17 +64,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// Считаем позицию от иконки каждый раз, а не двигаем от текущей: иначе
+    /// после сворачивания статистики узкая панель так и оставалась слева, там,
+    /// куда её отодвинули ради широкой.
     private func fitOnScreen() {
         guard let popover, popover.isShown,
+              let button = statusItem?.button, let anchorWindow = button.window,
               let window = popover.contentViewController?.view.window,
               let screen = window.screen ?? NSScreen.main else { return }
 
+        let anchor = anchorWindow.convertToScreen(button.convert(button.bounds, to: nil))
         let visible = screen.visibleFrame
         var frame = window.frame
-        let fitted = PopoverFit.fittedX(x: frame.origin.x, width: frame.width,
+        // Как ставит сам попап: по центру иконки. Дальше зажимаем в экран.
+        let wanted = PopoverFit.fittedX(x: anchor.midX - frame.width / 2, width: frame.width,
                                         screenMinX: visible.minX, screenMaxX: visible.maxX)
-        guard abs(fitted - frame.origin.x) > 0.5 else { return }
-        frame.origin.x = fitted
+        guard abs(wanted - frame.origin.x) > 0.5 else { return }
+        frame.origin.x = wanted
         window.setFrame(frame, display: true)
     }
 
