@@ -33,14 +33,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pop.behavior = .transient
         pop.contentViewController = NSHostingController(rootView: PanelView(model: model))
         popover = pop
+        watchPopoverResize()
 
         observer = model.objectWillChange.sink { [weak self] _ in
             // objectWillChange приходит до записи значения, поэтому
             // перерисовываем на следующем витке цикла.
-            DispatchQueue.main.async {
-                self?.redraw()
-                self?.scheduleFitOnScreen()
-            }
+            DispatchQueue.main.async { self?.redraw() }
         }
         redraw()
     }
@@ -49,12 +47,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     ///
     /// Попап центрируется по иконке в строке меню, а она у правого края: узкая
     /// панель влезает, а со статистикой вылезает наружу. Двигаем само окно.
-    /// Зовём дважды: сразу и после анимации, потому что ширину пересчитывает
-    /// SwiftUI и в момент переключения она ещё старая.
-    private func scheduleFitOnScreen() {
-        fitOnScreen()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
-            self?.fitOnScreen()
+    ///
+    /// Ловим именно ресайз окна, а не таймер: по таймеру панель успевала
+    /// заехать за край и потом дёрганно выезжала обратно. Уведомление приходит
+    /// в том же цикле, что и смена размера, поэтому наружу она уже не попадает.
+    private func watchPopoverResize() {
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.didResizeNotification, object: nil, queue: .main
+        ) { [weak self] note in
+            MainActor.assumeIsolated {
+                guard let self,
+                      let window = note.object as? NSWindow,
+                      window === self.popover?.contentViewController?.view.window else { return }
+                self.fitOnScreen()
+            }
         }
     }
 
@@ -137,7 +143,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             model.refresh()
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .maxY)
             popover.contentViewController?.view.window?.makeKey()
-            scheduleFitOnScreen()
+            fitOnScreen()
         }
     }
 }
@@ -223,13 +229,13 @@ final class AppModel: ObservableObject {
         statsScanning = true
         Task.detached(priority: .utility) {
             let started = Date()
-            let result = StatsScanner.scan()
+            let result = StatsScanner.load()
             let ms = Int(Date().timeIntervalSince(started) * 1000)
             await MainActor.run { [weak self] in
                 guard let self else { return }
                 self.stats = result
                 self.statsScanning = false
-                Log.write("stats scan: \(result.activeDays) дней, \(result.transcripts) записей, \(ms)ms")
+                Log.write("stats: \(result.activeDays) дней, \(result.transcripts) сессий, \(ms)ms")
             }
         }
     }

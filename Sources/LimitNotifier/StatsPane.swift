@@ -20,7 +20,7 @@ struct StatsPane: View {
                 Spacer()
                 Text(model.statsScanning
                      ? L.s("считаю…", "counting…")
-                     : L.s("транскриптов не нашлось", "no transcripts found"))
+                     : L.s("данных пока нет", "no data yet"))
                     .font(StatsMetrics.font)
                     .foregroundStyle(StatsPalette.faint)
                     .frame(maxWidth: .infinity, alignment: .center)
@@ -75,7 +75,7 @@ struct StatsPane: View {
     private func kpis(_ s: StatsSlice) -> some View {
         HStack(spacing: 1) {
             kpi(L.s("ТОКЕНОВ", "TOKENS"), Fmt.tokens(s.total))
-            kpi(L.s("ЗАПИСЕЙ", "TRANSCRIPTS"), "\(model.stats.transcripts)")
+            kpi(L.s("СЕССИЙ", "SESSIONS"), "\(model.stats.transcripts)")
             kpi(L.s("ДНЕЙ", "DAYS"), "\(s.dayCount)")
             kpi(L.s("СТРИК", "STREAK"), "\(model.stats.currentStreak)",
                 accent: model.stats.currentStreak > 0)
@@ -178,7 +178,7 @@ struct StatsPane: View {
                     .font(StatsMetrics.small).monospacedDigit()
                     .foregroundStyle(StatsPalette.value)
                 Text(day + " · \(model.stats.requests[day] ?? 0) "
-                     + L.s("запросов", "requests"))
+                     + L.s("сообщений", "messages"))
                     .font(StatsMetrics.small).foregroundStyle(StatsPalette.faint)
                     .lineLimit(1)
             }

@@ -959,3 +959,95 @@ struct PopoverFitTests {
         #expect(PopoverFit.fittedX(x: 50, width: 900, screenMinX: 0, screenMaxX: 800) == 8)
     }
 }
+
+// MARK: - Кэш статистики claude
+
+@Suite("Чтение stats-cache.json")
+struct StatsCacheTests {
+
+    private func cal() -> Calendar {
+        var c = Calendar(identifier: .gregorian)
+        c.timeZone = TimeZone(secondsFromGMT: 3 * 3600)!
+        return c
+    }
+
+    private func write(_ json: String) throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("stats-cache-\(UUID().uuidString).json")
+        try json.write(to: url, atomically: true, encoding: .utf8)
+        return url
+    }
+
+    /// Урезанный, но настоящий по форме кусок кэша Claude Code.
+    private let sample = """
+    {
+      "version": 4,
+      "lastComputedDate": "2026-07-23",
+      "dailyActivity": [
+        {"date": "2026-07-22", "messageCount": 2655, "sessionCount": 3},
+        {"date": "2026-07-23", "messageCount": 763, "sessionCount": 2}
+      ],
+      "dailyModelTokens": [
+        {"date": "2026-07-22", "tokensByModel": {"claude-opus-4-8": 2222947, "claude-fable-5": 589309}},
+        {"date": "2026-07-23", "tokensByModel": {"claude-opus-4-8": 918535}}
+      ],
+      "modelUsage": {"claude-opus-4-8": {"tokens": 3141482}},
+      "totalSessions": 44,
+      "firstSessionDate": "2026-05-22T19:05:14.611Z"
+    }
+    """
+
+    @Test("Кэш разбирается в дни и модели")
+    func parses() throws {
+        let url = try write(sample)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let now = StatsSlicer.isoDate("2026-07-23")!
+        let stats = try #require(StatsScanner.readCache(url, now: now, calendar: cal()))
+
+        #expect(stats.activeDays == 2)
+        #expect(stats.days["2026-07-22"]?["Opus 4.8"] == 2222947)
+        #expect(stats.days["2026-07-22"]?["Fable 5"] == 589309)
+        #expect(stats.busiestDay == "2026-07-22")
+        // Сессии берём из кэша: он помнит и то, чьи транскрипты уже стёрты.
+        #expect(stats.transcripts == 44)
+        #expect(stats.requests["2026-07-22"] == 2655)
+        #expect(stats.currentStreak == 2)
+    }
+
+    @Test("Чужой или битый файл не роняет, а отдаёт nil")
+    func rejectsGarbage() throws {
+        let now = Date()
+        for text in ["{}", "не json вовсе", #"{"dailyModelTokens": []}"#,
+                     #"{"dailyModelTokens": [{"date": "2026-07-22"}]}"#] {
+            let url = try write(text)
+            defer { try? FileManager.default.removeItem(at: url) }
+            #expect(StatsScanner.readCache(url, now: now, calendar: cal()) == nil,
+                    "не должен принять: \(text)")
+        }
+        // Файла нет вовсе.
+        let missing = URL(fileURLWithPath: "/tmp/нет-такого-файла-\(UUID().uuidString).json")
+        #expect(StatsScanner.readCache(missing, now: now, calendar: cal()) == nil)
+    }
+
+    /// Кэш считается раз в сутки, поэтому сегодняшний день приходит из свежих
+    /// транскриптов и должен перекрывать кэшевый, а не складываться с ним.
+    @Test("Свежий скан перекрывает кэш за тот же день")
+    func freshWins() {
+        let now = StatsSlicer.isoDate("2026-07-24")!
+        let cached = UsageStats(days: ["2026-07-23": ["Opus 4.8": 100],
+                                       "2026-07-24": ["Opus 4.8": 5]],
+                                hours: [:], requests: ["2026-07-24": 1], transcripts: 44,
+                                bestStreak: 2, currentStreak: 2, scannedAt: now)
+        let fresh = UsageStats(days: ["2026-07-24": ["Opus 4.8": 900, "Opus 5": 50]],
+                               hours: ["21": ["Opus 5": 50]], requests: ["2026-07-24": 42],
+                               transcripts: 3, bestStreak: 1, currentStreak: 1, scannedAt: now)
+        let merged = StatsScanner.merge(cached, fresh: fresh, now: now, calendar: cal())
+
+        #expect(merged.days["2026-07-24"]?["Opus 4.8"] == 900)   // не 905
+        #expect(merged.days["2026-07-24"]?["Opus 5"] == 50)
+        #expect(merged.days["2026-07-23"]?["Opus 4.8"] == 100)   // старое не тронуто
+        #expect(merged.requests["2026-07-24"] == 42)
+        #expect(merged.hours["21"]?["Opus 5"] == 50)
+        #expect(merged.transcripts == 44)
+    }
+}

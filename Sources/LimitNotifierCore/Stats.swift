@@ -14,9 +14,10 @@ public struct UsageStats: Sendable, Equatable {
     public let days: [String: [String: Int]]
     /// Токены по часу сегодняшнего дня: "21" -> ["Opus 5": 999]
     public let hours: [String: [String: Int]]
-    /// Запросов в день, для подписи к рекордному дню.
+    /// Сообщений в день, для подписи к рекордному дню.
     public let requests: [String: Int]
-    /// Транскриптов, в которых вообще была работа.
+    /// Сессий. Из кэша claude, поэтому совпадает с его вкладкой Stats;
+    /// при запасном скане это число транскриптов с работой.
     public let transcripts: Int
     public let bestStreak: Int
     public let currentStreak: Int
@@ -181,11 +182,85 @@ public enum StatsSlicer {
 
 public enum StatsScanner {
 
-    /// Полный проход по всем транскриптам. Дороже, чем скан трат (тот берёт
-    /// только неделю), поэтому дёргаем его лениво: при открытии статистики и
-    /// не чаще раза в 10 минут.
+    /// Кэш статистики, который ведёт сам Claude Code.
+    public static var defaultCache: URL {
+        URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".claude/stats-cache.json")
+    }
+
+    /// Основной путь: готовые агрегаты из кэша claude плюс сегодняшний день
+    /// из свежих транскриптов.
+    ///
+    /// Почему не считаем всё сами. Claude Code подчищает старые транскрипты, а
+    /// свой кэш ведёт дальше: собственный скан показывал 33 активных дня там,
+    /// где у claude их 44, остальные просто стёрты с диска. Плюс кэш это 12 КБ
+    /// против 328 МБ транскриптов, читается мгновенно вместо двенадцати секунд.
+    ///
+    /// Формат кэша недокументированный, поэтому на любой неожиданности молча
+    /// откатываемся на полный скан: он медленный, но работает всегда.
+    public static func load(cache: URL? = nil, root: URL = CostScanner.defaultRoot,
+                            now: Date = Date(), calendar: Calendar = .current) -> UsageStats {
+        guard let cached = readCache(cache ?? defaultCache, now: now, calendar: calendar) else {
+            return scan(root: root, now: now, calendar: calendar)
+        }
+        // Кэш пересчитывается раз в сутки, сегодняшнего дня в нём обычно нет.
+        // Дочитываем только свежие файлы, это быстро.
+        let fresh = scan(root: root, now: now, calendar: calendar,
+                         changedSince: now.addingTimeInterval(-2 * 86400))
+        return merge(cached, fresh: fresh, now: now, calendar: calendar)
+    }
+
+    /// Разбор ~/.claude/stats-cache.json. nil, если файла нет или формат чужой.
+    static func readCache(_ url: URL, now: Date, calendar: Calendar) -> UsageStats? {
+        guard let data = try? Data(contentsOf: url),
+              let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let daily = root["dailyModelTokens"] as? [[String: Any]], !daily.isEmpty
+        else { return nil }
+
+        var days: [String: [String: Int]] = [:]
+        for entry in daily {
+            guard let date = entry["date"] as? String,
+                  let tokens = entry["tokensByModel"] as? [String: Any] else { continue }
+            for (model, value) in tokens {
+                days[date, default: [:]][shortName(model), default: 0] += CostScanner.int(value)
+            }
+        }
+        guard !days.isEmpty else { return nil }
+
+        // Запросов по дням в кэше нет, но есть сообщения: для подписи к
+        // рекордному дню этого хватает, а выдумывать нечего.
+        var requests: [String: Int] = [:]
+        for entry in root["dailyActivity"] as? [[String: Any]] ?? [] {
+            if let date = entry["date"] as? String {
+                requests[date] = CostScanner.int(entry["messageCount"])
+            }
+        }
+
+        let (best, current) = streaks(days.keys.sorted(), now: now, calendar: calendar)
+        return UsageStats(days: days, hours: [:], requests: requests,
+                          transcripts: CostScanner.int(root["totalSessions"]),
+                          bestStreak: best, currentStreak: current, scannedAt: now)
+    }
+
+    /// Свежий скан перекрывает кэш: за сегодня и вчера он точнее.
+    static func merge(_ cached: UsageStats, fresh: UsageStats,
+                      now: Date, calendar: Calendar) -> UsageStats {
+        var days = cached.days
+        var requests = cached.requests
+        for (day, parts) in fresh.days {
+            days[day] = parts
+            if let count = fresh.requests[day] { requests[day] = count }
+        }
+        let (best, current) = streaks(days.keys.sorted(), now: now, calendar: calendar)
+        return UsageStats(days: days, hours: fresh.hours, requests: requests,
+                          transcripts: max(cached.transcripts, fresh.transcripts),
+                          bestStreak: best, currentStreak: current, scannedAt: now)
+    }
+
+    /// Проход по транскриптам. Запасной путь и источник сегодняшних часов.
+    /// С changedSince читает только недавно менявшиеся файлы.
     public static func scan(root: URL = CostScanner.defaultRoot, now: Date = Date(),
-                            calendar: Calendar = .current) -> UsageStats {
+                            calendar: Calendar = .current,
+                            changedSince: Date? = nil) -> UsageStats {
         var days: [String: [String: Int]] = [:]
         var hours: [String: [String: Int]] = [:]
         var requests: [String: Int] = [:]
@@ -193,13 +268,19 @@ public enum StatsScanner {
 
         let today = StatsScanner.dayKey(now, calendar: calendar)
         let fm = FileManager.default
-        guard let walker = fm.enumerator(at: root, includingPropertiesForKeys: nil,
+        guard let walker = fm.enumerator(at: root,
+                                         includingPropertiesForKeys: [.contentModificationDateKey],
                                          options: [.skipsHiddenFiles]) else {
             return .empty
         }
 
         for case let url as URL in walker {
             guard url.pathExtension == "jsonl" else { continue }
+            if let changedSince {
+                let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?
+                    .contentModificationDate
+                if let modified, modified < changedSince { continue }
+            }
             var used = false
             CostScanner.forEachLine(of: url) { line in
                 guard line.contains("\"usage\"") else { return }
