@@ -48,7 +48,7 @@ public struct UsageClient {
         case .timedOut: throw UsageError.timedOut
         case .finished(let status, let out, let err):
             let text = out + "\n" + err
-            if text.localizedCaseInsensitiveContains("not logged in") {
+            if Self.looksLoggedOut(text) {
                 throw UsageError.notLoggedIn
             }
             guard status == 0 else {
@@ -60,11 +60,31 @@ public struct UsageClient {
                 // Так выглядит превышение частоты опроса, отвалившаяся сеть и
                 // аккаунт без подписки. Различить их по выводу нельзя, поэтому
                 // это отдельное состояние, а не успех и не поломка: показываем
-                // прошлые цифры и честно пишем, когда они получены.
-                throw UsageError.noLimits
+                // прошлые цифры. В нагрузку кладём выжимку вывода: на чужой
+                // машине причина видна только так.
+                throw UsageError.noLimits(Self.snippet(text))
             }
             return snapshot
         }
+    }
+
+    /// Признаки того, что Claude Code не залогинен в этом окружении. Одного
+    /// "not logged in" мало: у разных версий формулировки разные, а тихий
+    /// logged out иначе улетает в "показываю прошлые" и путает пользователя.
+    static func looksLoggedOut(_ text: String) -> Bool {
+        let t = text.lowercased()
+        return ["not logged in", "please log in", "please run /login",
+                "run `claude login`", "invalid api key"].contains { t.contains($0) }
+    }
+
+    /// Однострочная выжимка вывода claude для лога: строки склеены, лишние
+    /// пробелы убраны, длина ограничена, чтобы не тащить в лог весь ответ.
+    static func snippet(_ text: String, limit: Int = 200) -> String {
+        let flat = text.split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " · ")
+        return flat.count > limit ? String(flat.prefix(limit)) + "…" : flat
     }
 
     /// Удаляет транскрипт, созданный нашим же запуском.

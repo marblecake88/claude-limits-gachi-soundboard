@@ -236,10 +236,11 @@ final class AppModel: ObservableObject {
             }
         } catch let e as UsageError {
             lastError = e
-            if case .noLimits = e {
+            if case .noLimits(let raw) = e {
                 // Не поломка: команда отработала, а процентов не отдала.
                 // Счётчик ошибок не трогаем, чтоб не уехать в долгий бэкофф.
-                Log.write("лимиты не отданы, показываю прошлые")
+                // Выжимку вывода пишем, чтоб причину было видно и на чужой машине.
+                Log.write("лимиты не отданы, показываю прошлые" + (raw.isEmpty ? "" : " · claude: \(raw)"))
             } else {
                 failureStreak += 1
                 Log.write("fetch failed (\(failureStreak)): \(e)")
@@ -371,7 +372,11 @@ final class AppModel: ObservableObject {
         // Пингуем только если окно сейчас не идёт: запущенное окно пинг всё
         // равно не перезапустит, так что вызов был бы холостым.
         await fetchOnce()
-        if snapshot?.sessionWindowActive == true {
+        // Считаем от текущего момента, а не по флагу снапшота: протухший снапшот
+        // (когда /usage молчит) держит старый флаг true и после закрытия окна,
+        // из-за чего нужный пинг терялся. Лишний пинг по идущему окну безвреден,
+        // он его не перезапускает, а вот пропуск нужного пинга ломает всё утро.
+        if snapshot?.sessionRunning(at: Date()) == true {
             Log.write("ping skipped, window already running")
             return
         }
@@ -385,7 +390,7 @@ final class AppModel: ObservableObject {
             // Верим не коду возврата, а серверу: окно либо открылось, либо нет.
             // Иначе в логе будет бодрое "ok" при том, что ничего не произошло.
             await fetchOnce()
-            if snapshot?.sessionWindowActive == true {
+            if snapshot?.sessionRunning(at: Date()) == true {
                 Log.write("ping ok, окно открыто, сбросится в якорное время")
             } else {
                 Log.write("ping отработал, но окна на сервере не видно")

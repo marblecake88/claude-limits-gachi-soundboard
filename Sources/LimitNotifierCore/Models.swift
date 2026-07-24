@@ -70,6 +70,15 @@ public struct UsageSnapshot: Sendable, Equatable {
 
     public var session: LimitRow? { rows.first(where: \.isSession) }
     public var weekly: [LimitRow] { rows.filter { !$0.isSession } }
+
+    /// Идёт ли сессионное окно на переданный момент. Считаем от now, а не по
+    /// флагу sessionWindowActive: тот заморожен в момент замера. Если /usage
+    /// перестал отвечать и снапшот протух, старый флаг остаётся true и после
+    /// закрытия окна, из-за чего утренний пинг решал что окно идёт, и пропускал
+    /// его. По resetsAt против now протухшее окно честно считается закрытым.
+    public func sessionRunning(at now: Date) -> Bool {
+        session?.resetsAt.map { $0 > now } ?? false
+    }
 }
 
 public enum UsageError: Error, Sendable, Equatable {
@@ -81,7 +90,9 @@ public enum UsageError: Error, Sendable, Equatable {
     /// Так выглядит превышение частоты опроса, отвалившаяся сеть и аккаунт без
     /// подписки. Различить их по выводу нельзя, поэтому это отдельное
     /// состояние: показываем прошлые цифры и пишем, когда они получены.
-    case noLimits
+    /// В нагрузке однострочная выжимка вывода claude для лога: без доступа к
+    /// чужой машине это единственный способ понять, что реально вернул CLI.
+    case noLimits(String)
     case timedOut
     case launchFailed(String)
 

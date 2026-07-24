@@ -248,6 +248,18 @@ struct ParseTests {
         #expect(after.sessionWindowActive == false)
     }
 
+    /// Регресс: ночной пинг не должен пропускаться по протухшему снапшоту.
+    /// Снимок сделан в 12:00 (окно идёт, сброс в 19:10 UTC), а /usage потом
+    /// перестал отвечать и снимок завис. Замороженный флаг так и остаётся true,
+    /// но решение о пинге считается от текущего момента и после сброса даёт false.
+    @Test("Протухший снапшот: окно закрыто, если сброс уже прошёл")
+    func staleWindowByTime() throws {
+        let stale = try #require(UsageClient.parse(realOutput, now: utc(2026, 7, 22, 12, 0)))
+        #expect(stale.sessionWindowActive)                              // флаг заморожен на true
+        #expect(stale.sessionRunning(at: utc(2026, 7, 22, 12, 0)))      // в момент замера окно идёт
+        #expect(stale.sessionRunning(at: utc(2026, 7, 22, 20, 0)) == false) // за сбросом закрыто
+    }
+
     /// Проценты бывают дробные, а порядок строк может поменяться.
     @Test("Дробные проценты и произвольный порядок")
     func lenient() throws {
@@ -262,12 +274,30 @@ struct ParseTests {
 
     @Test("Ошибки различаются по смыслу")
     func errorKinds() {
-        #expect(UsageError.noLimits.isTransient)
+        #expect(UsageError.noLimits("").isTransient)
         #expect(UsageError.timedOut.isTransient)
         #expect(UsageError.notLoggedIn.isTransient == false)
         #expect(UsageError.claudeNotFound.isTransient == false)
         // Текст про прошлые цифры важен: это не поломка, а неполные данные.
-        #expect(UsageError.noLimits.hint.contains("прошлые"))
+        #expect(UsageError.noLimits("").hint.contains("прошлые"))
+    }
+
+    @Test("Разные формулировки logged out распознаются")
+    func loggedOut() {
+        #expect(UsageClient.looksLoggedOut("Not logged in"))
+        #expect(UsageClient.looksLoggedOut("Please log in to continue"))
+        #expect(UsageClient.looksLoggedOut("Please run /login"))
+        #expect(UsageClient.looksLoggedOut("Invalid API key"))
+        // Нормальный вывод лимитов за logged out не принимаем.
+        #expect(UsageClient.looksLoggedOut(realOutput) == false)
+    }
+
+    @Test("Выжимка вывода: одна строка, без пустот, с ограничением длины")
+    func outputSnippet() {
+        let s = UsageClient.snippet("  first line \n\n  second  \n")
+        #expect(s == "first line · second")
+        #expect(UsageClient.snippet("").isEmpty)
+        #expect(UsageClient.snippet(String(repeating: "x", count: 500)).count <= 201)
     }
 }
 
