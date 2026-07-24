@@ -611,6 +611,19 @@ struct CostTests {
         #expect(Pricing.forModel("<synthetic>") == nil)
     }
 
+    /// Opus 5 вышел 2026-07-24 и до этого попадал в список неизвестных моделей.
+    /// Заодно страхуемся от порядка префиксов: opus-5 не должен ловиться
+    /// записью opus-4-*, а sonnet-5 не должен путаться с sonnet-4-6.
+    @Test("Opus 5 считается, префиксы не перехлёстываются")
+    func opus5() {
+        #expect(Pricing.forModel("claude-opus-5")?.input == 5)
+        #expect(Pricing.forModel("claude-opus-5")?.output == 25)
+        #expect(Pricing.forModel("claude-opus-5[1m]")?.input == 5)
+        // Вводная цена Sonnet 5, действует по 31 августа 2026.
+        #expect(Pricing.forModel("claude-sonnet-5")?.input == 2)
+        #expect(Pricing.forModel("claude-sonnet-4-6")?.input == 3)
+    }
+
     /// Без разбивки по TTL считаем как часовой кэш: так пишет Claude Code.
     @Test("Кэш без разбивки считается по часовому тарифу")
     func cacheWithoutBreakdown() {
@@ -643,6 +656,32 @@ struct EmptyUsageTests {
         ]) == false)
         #expect(CostScanner.hasTokens(["output_tokens": 1]))
         #expect(CostScanner.hasTokens(["cache_read_input_tokens": 42]))
+    }
+}
+
+@Suite("Проверка обновлений")
+struct UpdateCheckTests {
+
+    @Test("Версии сравниваются по числам, а не как строки")
+    func compare() {
+        #expect(UpdateCheck.isNewer("1.1.1", than: "1.1"))
+        #expect(UpdateCheck.isNewer("1.2", than: "1.1.9"))
+        // Строковое сравнение тут дало бы "1.10" < "1.9", человек не увидел бы
+        // обновление. Поэтому и считаем по компонентам.
+        #expect(UpdateCheck.isNewer("1.10", than: "1.9"))
+        #expect(UpdateCheck.isNewer("2.0", than: "1.99.99"))
+        // Своя же и более старая версия обновлением не считаются.
+        #expect(UpdateCheck.isNewer("1.1.1", than: "1.1.1") == false)
+        #expect(UpdateCheck.isNewer("1.0", than: "1.1") == false)
+        #expect(UpdateCheck.isNewer("1.1", than: "1.1.1") == false)
+    }
+
+    @Test("Ведущая v и хвосты не мешают")
+    func tags() {
+        #expect(UpdateCheck.normalize("v1.1.1") == "1.1.1")
+        #expect(UpdateCheck.normalize(" 1.1.1\n") == "1.1.1")
+        #expect(UpdateCheck.isNewer("v1.2", than: "1.1"))
+        #expect(UpdateCheck.isNewer("1.2-beta", than: "1.1"))
     }
 }
 
@@ -687,6 +726,23 @@ struct PollPlanTests {
                                   failureStreak: 0, retryAfter: nil) == 120)
         #expect(PollPlan.interval(snapshot: snap(percent: 99, active: true),
                                   failureStreak: 0, retryAfter: nil) == 120)
+    }
+
+    /// Регресс: раньше "лимиты не отданы" темп опроса не меняло вовсе, и при
+    /// горящем окне мы спрашивали раз в 2 минуты, поддерживая ограничение
+    /// частоты на стороне claude.
+    @Test("Пустой ответ удлиняет паузу, пока не упрётся в час")
+    func emptyAnswerBacksOff() {
+        let first = PollPlan.backoff(previous: nil)
+        #expect(first == 900)
+        let second = PollPlan.backoff(previous: first)
+        #expect(second == 1800)
+        #expect(PollPlan.backoff(previous: second) == 3600)
+        // Потолок: дальше не растём.
+        #expect(PollPlan.backoff(previous: 3600) == 3600)
+        // И эта пауза действительно перебивает частый опрос у лимита.
+        #expect(PollPlan.interval(snapshot: snap(percent: 95, active: true),
+                                  failureStreak: 0, retryAfter: first) == 900)
     }
 
     @Test("Сеть лежит: не долбим")

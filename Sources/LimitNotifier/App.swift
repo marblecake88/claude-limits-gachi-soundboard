@@ -52,11 +52,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             line.append(NSAttributedString(string: text,
                                            attributes: [.font: font, .foregroundColor: color]))
         }
+        // Полупрозрачные системные оттенки (secondary/tertiary) на светлом
+        // таскбаре сливаются с фоном: они белые с альфой, а обои под меню-баром
+        // светлые, и счётчика времени просто не видно. Берём непрозрачный
+        // labelColor, он сам переключается между чёрным и белым по теме.
         add(p.session, Self.color(p.sessionLevel))
-        add("/", .tertiaryLabelColor)
+        add("/", .labelColor)
         add(p.weekly, Self.color(p.weeklyLevel))
-        add("/", .tertiaryLabelColor)
-        add(p.time, .secondaryLabelColor)
+        add("/", .labelColor)
+        add(p.time, .labelColor)
 
         statusItem?.button?.attributedTitle = line
     }
@@ -93,6 +97,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var lastError: UsageError?
     @Published private(set) var isRefreshing = false
     @Published private(set) var nextPingText = "выключено"
+    /// Версия из последнего релиза, если она новее нашей. Иначе nil.
+    @Published private(set) var updateVersion: String?
 
     /// Какой экран показан. По умолчанию борд, но если пользователь хоть раз
     /// заходил в лимиты, панель открывается сразу на них.
@@ -120,6 +126,9 @@ final class AppModel: ObservableObject {
     private var pollTask: Task<Void, Never>?
     private var keepAliveTask: Task<Void, Never>?
     private var failureStreak = 0
+    /// Пауза, которую сами себе назначили, когда claude не отдал лимиты.
+    /// Сбрасывается первым же удачным ответом.
+    private var retryAfter: Int?
     private var lastDigest = ""
     private var lastWakeSpec = ""
 
@@ -154,6 +163,7 @@ final class AppModel: ObservableObject {
     /// не дожидаясь следующего запроса к серверу.
     @Published private(set) var tick = Date()
     private var tickTask: Task<Void, Never>?
+    private var updateTask: Task<Void, Never>?
 
 
     init() {
@@ -167,6 +177,15 @@ final class AppModel: ObservableObject {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(30))
                 self?.tick = Date()
+            }
+        }
+
+        // Раз в сутки смотрим, не вышла ли новая версия. Чаще незачем, релизы
+        // не каждый час, а GitHub API анонимно ограничен по частоте.
+        updateTask = Task { [weak self] in
+            while !Task.isCancelled {
+                await self?.checkForUpdate()
+                try? await Task.sleep(for: .seconds(24 * 3600))
             }
         }
 
@@ -198,7 +217,8 @@ final class AppModel: ObservableObject {
 
     /// Сколько ждать до следующего опроса. Правила в PollPlan, там же тесты.
     private var nextDelay: Duration {
-        .seconds(PollPlan.interval(snapshot: snapshot, failureStreak: failureStreak))
+        .seconds(PollPlan.interval(snapshot: snapshot, failureStreak: failureStreak,
+                                   retryAfter: retryAfter))
     }
 
     func refresh(force: Bool = false) {
@@ -230,6 +250,7 @@ final class AppModel: ObservableObject {
             }
             snapshot = fresh
             lastError = nil
+            retryAfter = nil
             if failureStreak > 0 {
                 Log.write("fetch recovered after \(failureStreak) failures")
                 failureStreak = 0
@@ -238,9 +259,12 @@ final class AppModel: ObservableObject {
             lastError = e
             if case .noLimits(let raw) = e {
                 // Не поломка: команда отработала, а процентов не отдала.
-                // Счётчик ошибок не трогаем, чтоб не уехать в долгий бэкофф.
-                // Выжимку вывода пишем, чтоб причину было видно и на чужой машине.
-                Log.write("лимиты не отданы, показываю прошлые" + (raw.isEmpty ? "" : " · claude: \(raw)"))
+                // Счётчик ошибок не трогаем, чтоб не считать это сбоем, но паузу
+                // удлиняем: у того, кому usage режут по частоте, прежний опрос
+                // раз в 2-10 минут это ограничение только поддерживал.
+                retryAfter = PollPlan.backoff(previous: retryAfter)
+                Log.write("лимиты не отданы, показываю прошлые, следующий опрос через \(retryAfter! / 60)м"
+                          + (raw.isEmpty ? "" : " · claude: \(raw)"))
             } else {
                 failureStreak += 1
                 Log.write("fetch failed (\(failureStreak)): \(e)")
@@ -250,6 +274,24 @@ final class AppModel: ObservableObject {
             failureStreak += 1
             Log.write("fetch failed (\(failureStreak)): \(error.localizedDescription)")
         }
+    }
+
+    // MARK: - Обновления
+
+    /// Текущая версия из бандла. При запуске из swift run её нет, тогда "0".
+    var currentVersion: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0"
+    }
+
+    private func checkForUpdate() async {
+        guard let latest = await UpdateCheck.latestTag() else { return }
+        let newer = UpdateCheck.isNewer(latest, than: currentVersion)
+        updateVersion = newer ? latest : nil
+        if newer { Log.write("новая версия \(latest), у нас \(currentVersion)") }
+    }
+
+    func openReleases() {
+        NSWorkspace.shared.open(UpdateCheck.releasesURL)
     }
 
     // MARK: - Настройки

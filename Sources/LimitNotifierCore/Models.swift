@@ -104,7 +104,7 @@ public enum UsageError: Error, Sendable, Equatable {
         case .notLoggedIn:
             return "Claude Code не залогинен. Запусти claude и войди."
         case .noLimits:
-            return "Лимиты сейчас не отдаются. Показываю прошлые цифры."
+            return "Claude не отдаёт лимиты, похоже режет частоту. Показываю прошлые цифры и жду."
         case .timedOut:
             return "claude не ответил вовремя."
         case .launchFailed(let m):
@@ -231,8 +231,7 @@ public enum PollPlan {
     public static func interval(snapshot: UsageSnapshot?,
                                 failureStreak: Int,
                                 retryAfter: Int? = nil) -> Int {
-        // CLI не отдаёт Retry-After, но параметр оставлен: если данные снова
-        // начнут приходить с подсказкой сервера, слушаться надо её.
+        // Сюда приходит либо подсказка сервера, либо наш бэкофф из backoff().
         if let retryAfter { return max(retryAfter, minimum) }
         // Сеть лежит или токен протух: не долбим.
         if failureStreak >= 3 { return 900 }
@@ -242,5 +241,13 @@ public enum PollPlan {
         // Близко к лимиту, тут точность важнее экономии запросов.
         if (snapshot.session?.percent ?? 0) >= 79 { return 120 }
         return 600
+    }
+
+    /// Пауза после того, как claude не отдал лимиты. Раньше этот случай не
+    /// удлинял паузу вовсе, и приложение продолжало спрашивать раз в 2-10 минут.
+    /// У пользователя, которому usage режут по частоте, это ограничение только
+    /// поддерживало. Удваиваем от 7.5 минут до часа, при успехе сбрасывается.
+    public static func backoff(previous: Int?) -> Int {
+        min((previous ?? 450) * 2, 3600)
     }
 }

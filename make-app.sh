@@ -25,6 +25,14 @@ rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources/sounds"
 cp "$bin" "$app/Contents/MacOS/LimitNotifier"
 cp Resources/Info.plist "$app/Contents/Info.plist"
+
+# Штампуем билд из git: угол панели показывает короткий хэш, чтоб по скриншоту
+# от пользователя было видно, что за код у него запущен.
+sha=$(git rev-parse --short HEAD 2>/dev/null || echo local)
+count=$(git rev-list --count HEAD 2>/dev/null || echo 1)
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $count" "$app/Contents/Info.plist" >/dev/null
+/usr/libexec/PlistBuddy -c "Set :BuildSHA $sha" "$app/Contents/Info.plist" >/dev/null 2>&1 \
+    || /usr/libexec/PlistBuddy -c "Add :BuildSHA string $sha" "$app/Contents/Info.plist" >/dev/null
 cp Resources/AppIcon.icns Resources/cat.png "$app/Contents/Resources/"
 cp Resources/sounds/*.mp3 Resources/sounds/index.json "$app/Contents/Resources/sounds/"
 

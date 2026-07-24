@@ -23,16 +23,21 @@ public struct Prices: Sendable, Equatable {
 }
 
 public enum Pricing {
-    /// Сверено с документацией на 2026-07-22. Ключ это префикс id модели.
+    /// Сверено с документацией на 2026-07-24. Ключ это префикс id модели.
     /// Старые модели, по которым у меня нет подтверждённой цены, сюда не
     /// внесены намеренно: лучше показать их в списке неизвестных, чем выдумать.
+    ///
+    /// Порядок важен: ищем по первому совпавшему префиксу, поэтому claude-opus-5
+    /// стоит раньше claude-opus-4-*, а не наоборот.
     public static let table: [(prefix: String, prices: Prices)] = [
         ("claude-fable-5",   Prices(input: 10, output: 50)),
         ("claude-mythos-5",  Prices(input: 10, output: 50)),
+        ("claude-opus-5",    Prices(input: 5,  output: 25)),
         ("claude-opus-4-8",  Prices(input: 5,  output: 25)),
         ("claude-opus-4-7",  Prices(input: 5,  output: 25)),
         ("claude-opus-4-6",  Prices(input: 5,  output: 25)),
-        ("claude-sonnet-5",  Prices(input: 3,  output: 15)),
+        // Вводная цена Sonnet 5 действует по 31 августа 2026, потом станет 3/15.
+        ("claude-sonnet-5",  Prices(input: 2,  output: 10)),
         ("claude-sonnet-4-6", Prices(input: 3, output: 15)),
         ("claude-haiku-4-5", Prices(input: 1,  output: 5)),
     ]

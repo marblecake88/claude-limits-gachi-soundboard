@@ -1,8 +1,8 @@
 # claude limits gachi soundboard
 
-[![release](https://img.shields.io/badge/release-v1.1-ff598c)](https://github.com/marblecake88/claude-limits-gachi-soundboard/releases)
+[![release](https://img.shields.io/badge/release-v1.1.1-ff598c)](https://github.com/marblecake88/claude-limits-gachi-soundboard/releases)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-![macos](https://img.shields.io/badge/macos-11%2B-black)
+![macos](https://img.shields.io/badge/macos-14%2B-black)
 ![swift](https://img.shields.io/badge/swift-6-f05138)
 
 [English below](#english)
@@ -27,8 +27,14 @@
 
 ## поставить
 
-взять LimitNotifier.zip из [релизов](https://github.com/marblecake88/claude-limits-gachi-soundboard/releases), распаковать, перетащить в /Applications.
-нужен установленный и залогиненный Claude Code, цифры берутся из него.
+через brew:
+
+    brew install --cask marblecake88/tap/claude-limits-gachi-soundboard
+
+или руками: взять LimitNotifier.zip из [релизов](https://github.com/marblecake88/claude-limits-gachi-soundboard/releases), распаковать, перетащить в /Applications.
+
+нужен macos 14 и установленный залогиненный Claude Code, цифры берутся из него.
+когда выходит новая версия, приложение само пишет об этом в углу панели.
 
 ## собрать самому
 
@@ -60,8 +66,14 @@ Once you open limits, next time it opens straight to them.
 
 ### install
 
-grab LimitNotifier.zip from [releases](https://github.com/marblecake88/claude-limits-gachi-soundboard/releases), unzip, drag to /Applications.
-you need Claude Code installed and logged in, the numbers come from it.
+via brew:
+
+    brew install --cask marblecake88/tap/claude-limits-gachi-soundboard
+
+or by hand: grab LimitNotifier.zip from [releases](https://github.com/marblecake88/claude-limits-gachi-soundboard/releases), unzip, drag to /Applications.
+
+needs macos 14 and Claude Code installed and logged in, the numbers come from it.
+when a new version ships, the app says so in the corner of the panel.
 
 ### build
 

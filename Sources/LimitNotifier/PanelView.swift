@@ -281,9 +281,33 @@ struct PanelView: View {
             )
             .disabled(model.isRefreshing)
             Spacer(minLength: 8)
+            if let update = model.updateVersion {
+                // Обновление важнее самой версии, поэтому вместо неё и заметным
+                // цветом. Клик ведёт на страницу релизов.
+                Button(action: { model.openReleases() }) {
+                    Text("UPDATE \(update) ↗")
+                        .font(Metrics.font).tracking(Metrics.trackFoot)
+                        .foregroundStyle(Palette.accent)
+                }
+                .buttonStyle(.plain)
+            } else {
+                Text(Self.buildLabel)
+                    .font(Metrics.font).tracking(Metrics.trackFoot)
+                    .foregroundStyle(Palette.faint)
+            }
+            Spacer(minLength: 8)
             FootButton(title: "QUIT", muted: false, action: { model.quit() })
         }
         .padding(.top, 2)
+    }
+
+    /// Версия и билд для угла панели. Билд это короткий git-хэш из BuildSHA,
+    /// который проставляет make-app.sh, чтоб по скриншоту было видно что за код.
+    private static var buildLabel: String {
+        let info = Bundle.main.infoDictionary
+        let version = info?["CFBundleShortVersionString"] as? String ?? "?"
+        let sha = info?["BuildSHA"] as? String
+        return sha.map { "v\(version) · \($0)" } ?? "v\(version)"
     }
 }
 
