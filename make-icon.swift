@@ -12,12 +12,9 @@ let out = "Resources"
 let iconset = "\(out)/AppIcon.iconset"
 try? FileManager.default.createDirectory(atPath: iconset, withIntermediateDirectories: true)
 
-/// Три полоски с разной заливкой: 5h, неделя, скоуп. Верхняя акцентная.
-let bars: [(fill: CGFloat, color: NSColor)] = [
-    (0.72, NSColor(red: 0.37, green: 0.91, blue: 0.82, alpha: 1)),   // циан
-    (0.46, NSColor(white: 1, alpha: 0.62)),
-    (0.24, NSColor(white: 1, alpha: 0.34)),
-]
+/// Тот же вырезанный кот, что на борде: иконку узнают по нему, а не по
+/// абстрактным полоскам.
+let cat = NSImage(contentsOfFile: "Resources/cat.png")
 
 func draw(size: Int) -> NSBitmapImageRep {
     let s = CGFloat(size)
@@ -48,27 +45,19 @@ func draw(size: Int) -> NSBitmapImageRep {
     plate.lineWidth = max(1, s * 0.006)
     plate.stroke()
 
-    // Полоски
-    let trackX = rect.minX + rect.width * 0.185
-    let trackW = rect.width * 0.63
-    let barH = rect.height * 0.105
-    let gap = rect.height * 0.105
-    let block = CGFloat(bars.count) * barH + CGFloat(bars.count - 1) * gap
-    var y = rect.midY + block / 2 - barH
-
-    for bar in bars {
-        let track = NSBezierPath(roundedRect: CGRect(x: trackX, y: y, width: trackW, height: barH),
-                                 xRadius: barH / 2, yRadius: barH / 2)
-        NSColor(white: 1, alpha: 0.11).setFill()
-        track.fill()
-
-        let fillW = max(barH, trackW * bar.fill)
-        let fill = NSBezierPath(roundedRect: CGRect(x: trackX, y: y, width: fillW, height: barH),
-                                xRadius: barH / 2, yRadius: barH / 2)
-        bar.color.setFill()
-        fill.fill()
-
-        y -= barH + gap
+    // Кот по центру плитки. Вписываем по высоте: морда с ушами вытянута
+    // вверх, по ширине упёрлись бы раньше и он стал бы мелким.
+    if let cat {
+        let target = rect.height * 0.78
+        let scale = target / cat.size.height
+        let width = cat.size.width * scale
+        let box = CGRect(x: rect.midX - width / 2,
+                         y: rect.midY - target / 2 - rect.height * 0.01,
+                         width: width, height: target)
+        ctx.saveGState()
+        plate.addClip()
+        cat.draw(in: box, from: .zero, operation: .sourceOver, fraction: 1)
+        ctx.restoreGState()
     }
 
     NSGraphicsContext.restoreGraphicsState()

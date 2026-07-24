@@ -489,7 +489,8 @@ private struct SettingsBlock: View {
                 Switch(isOn: Binding(get: { settings.keepAliveEnabled }, set: onKeepAlive))
             }
             Note(L.s("Утром к нужному часу будет окно с 99% лимита. Работаете с 8, ставьте 9",
-                     "By your hour the window will have 99% of the limit left. Start at 8, set 9"))
+                     "Wakes Claude 5 hours early and burns an empty window, so at the hour "
+                     + "below your 5-hour limit is full. Start work at 8? Set 9"))
 
             Spacer().frame(height: 9)
 
@@ -511,7 +512,7 @@ private struct SettingsBlock: View {
             .disabled(!settings.keepAliveEnabled)
             .opacity(settings.keepAliveEnabled ? 1 : 0.45)
             Note(L.s("Нужна, если закрываете мак на ночь",
-                     "Needed if you close the mac overnight"))
+                     "Needed if your mac sleeps at night: it will wake it for the ping"))
         }
     }
 

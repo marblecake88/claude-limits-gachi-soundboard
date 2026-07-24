@@ -39,7 +39,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // перерисовываем на следующем витке цикла.
             DispatchQueue.main.async {
                 self?.redraw()
-                self?.keepOnScreen()
+                self?.scheduleFitOnScreen()
             }
         }
         redraw()
@@ -47,23 +47,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Не даём развёрнутой панели уехать за правый край экрана.
     ///
-    /// Попап центрируется по иконке в строке меню, а она обычно у правого края:
-    /// узкая панель влезает, а со статистикой вылезает наружу. Двигаем окно
-    /// целиком, сдвигая точку привязки влево.
-    private func keepOnScreen() {
-        guard let button = statusItem?.button, let popover, popover.isShown,
-              let window = button.window, let screen = window.screen else { return }
-
-        let onScreen = window.convertToScreen(button.convert(button.bounds, to: nil))
-        let shift = PopoverFit.shift(center: onScreen.midX,
-                                     width: PanelSize.total(statsOpen: model.statsOpen),
-                                     screenMinX: screen.visibleFrame.minX,
-                                     screenMaxX: screen.visibleFrame.maxX)
-        let wanted = button.bounds.offsetBy(dx: -shift, dy: 0)
-        // Присваивание дёргает перерисовку попапа, поэтому только при разнице.
-        if abs(popover.positioningRect.origin.x - wanted.origin.x) > 0.5 {
-            popover.positioningRect = wanted
+    /// Попап центрируется по иконке в строке меню, а она у правого края: узкая
+    /// панель влезает, а со статистикой вылезает наружу. Двигаем само окно.
+    /// Зовём дважды: сразу и после анимации, потому что ширину пересчитывает
+    /// SwiftUI и в момент переключения она ещё старая.
+    private func scheduleFitOnScreen() {
+        fitOnScreen()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+            self?.fitOnScreen()
         }
+    }
+
+    private func fitOnScreen() {
+        guard let popover, popover.isShown,
+              let window = popover.contentViewController?.view.window,
+              let screen = window.screen ?? NSScreen.main else { return }
+
+        let visible = screen.visibleFrame
+        var frame = window.frame
+        let fitted = PopoverFit.fittedX(x: frame.origin.x, width: frame.width,
+                                        screenMinX: visible.minX, screenMaxX: visible.maxX)
+        guard abs(fitted - frame.origin.x) > 0.5 else { return }
+        frame.origin.x = fitted
+        window.setFrame(frame, display: true)
     }
 
     /// Строка вида 55/78/2h15, каждое число своим цветом.
@@ -131,6 +137,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             model.refresh()
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .maxY)
             popover.contentViewController?.view.window?.makeKey()
+            scheduleFitOnScreen()
         }
     }
 }

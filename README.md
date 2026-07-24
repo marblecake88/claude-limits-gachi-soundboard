@@ -1,6 +1,6 @@
 # claude limits gachi soundboard
 
-[![release](https://img.shields.io/badge/release-v1.2.1-ff598c)](https://github.com/marblecake88/claude-limits-gachi-soundboard/releases)
+[![release](https://img.shields.io/badge/release-v1.2.2-ff598c)](https://github.com/marblecake88/claude-limits-gachi-soundboard/releases)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 ![macos](https://img.shields.io/badge/macos-14%2B-black)
 ![swift](https://img.shields.io/badge/swift-6-f05138)
@@ -41,6 +41,27 @@ trust нужен один раз, свежий homebrew иначе не груз
 
 нужен macos 14 и установленный залогиненный Claude Code, цифры берутся из него.
 когда выходит новая версия, приложение само пишет об этом в углу панели.
+
+## поставить с нуля на чистом маке
+
+если нет ни brew, ни claude code, всё ставится одной пачкой:
+
+    # homebrew
+    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+    # claude code, без него цифр не будет
+    brew install --cask claude-code
+
+    # войти в аккаунт: откроется браузер
+    claude
+
+    # само приложение
+    brew trust marblecake88/tap
+    brew install --cask marblecake88/tap/claude-limits-gachi-soundboard
+    open /Applications/LimitNotifier.app
+
+homebrew в конце установки печатает пару команд про PATH, их надо выполнить,
+иначе brew не найдётся в новой вкладке терминала.
 
 ## обновить без brew
 
@@ -100,6 +121,27 @@ or by hand: grab LimitNotifier.zip from [releases](https://github.com/marblecake
 
 needs macos 14 and Claude Code installed and logged in, the numbers come from it.
 when a new version ships, the app says so in the corner of the panel.
+
+### install from scratch on a clean mac
+
+no brew, no claude code, one paste:
+
+    # homebrew
+    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+    # claude code, the numbers come from it
+    brew install --cask claude-code
+
+    # sign in, opens a browser
+    claude
+
+    # the app itself
+    brew trust marblecake88/tap
+    brew install --cask marblecake88/tap/claude-limits-gachi-soundboard
+    open /Applications/LimitNotifier.app
+
+homebrew prints a couple of PATH commands at the end, run them, otherwise brew
+won't be found in a new terminal tab.
 
 ### update without brew
 
