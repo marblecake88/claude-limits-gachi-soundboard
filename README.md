@@ -1,6 +1,6 @@
 # claude limits gachi soundboard
 
-[![release](https://img.shields.io/badge/release-v1.3.1-ff598c)](https://github.com/marblecake88/claude-limits-gachi-soundboard/releases)
+[![release](https://img.shields.io/badge/release-v1.4-ff598c)](https://github.com/marblecake88/claude-limits-gachi-soundboard/releases)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 ![macos](https://img.shields.io/badge/macos-14%2B-black)
 ![swift](https://img.shields.io/badge/swift-6-f05138)
@@ -102,7 +102,8 @@ Claude overnight so by the time you wake up you have 99% of the 5-hour limit and
   and an hour before it closes. you start at 8, set it to 9
 - spend in dollars at API rates, computed locally from transcripts
 - statistics: hit STATS on the limits panel and the window expands to the right — tokens per day,
-  activity, models, streaks. today / week / month / all time
+  activity, models, streaks. today / week / month / all time. per-day numbers exclude cache
+  (same as claude), the full volume with cache is shown on its own line
 - the UI is English unless your system is Russian, with an RU/EN switch in the panel
 
 The menu bar always shows limits. Click opens the board, limits are the second screen.

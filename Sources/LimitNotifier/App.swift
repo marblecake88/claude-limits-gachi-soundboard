@@ -215,6 +215,9 @@ final class AppModel: ObservableObject {
 
     func setStatsPeriod(_ period: StatsPeriod) { statsPeriod = period }
 
+    /// Кнопка пересчёта в панели статистики: считаем сразу, без выдержки.
+    func refreshStats() { rescanStats(force: true) }
+
     /// Переключение языка на лету. Строки собираются при отрисовке, поэтому
     /// достаточно дёрнуть перерисовку, а вот уже посчитанный текст следующего
     /// пинга приходится пересобрать руками.

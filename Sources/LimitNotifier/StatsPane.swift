@@ -45,6 +45,15 @@ struct StatsPane: View {
             Text(L.s("СТАТИСТИКА", "STATISTICS"))
                 .font(StatsMetrics.font).tracking(0.9)
                 .foregroundStyle(StatsPalette.key)
+            Button(action: { model.refreshStats() }) {
+                Text(model.statsScanning ? "…" : "⟳")
+                    .font(StatsMetrics.font)
+                    .foregroundStyle(model.statsScanning
+                                     ? StatsPalette.faint : StatsPalette.accent)
+            }
+            .buttonStyle(.plain)
+            .disabled(model.statsScanning)
+            .help(L.s("пересчитать", "recount"))
             Spacer(minLength: 8)
             ForEach(StatsPeriod.allCases, id: \.self) { period in
                 Button(action: { model.setStatsPeriod(period) }) {
@@ -106,6 +115,8 @@ struct StatsPane: View {
             HStack(spacing: 8) {
                 Text(s.title).font(StatsMetrics.font).tracking(0.9)
                     .foregroundStyle(StatsPalette.key)
+                Text(L.s("без кэша", "no cache"))
+                    .font(StatsMetrics.small).foregroundStyle(StatsPalette.faint)
                 Spacer(minLength: 6)
                 legend(s.models)
             }
@@ -183,8 +194,14 @@ struct StatsPane: View {
                     .lineLimit(1)
             }
             Spacer(minLength: 6)
-            Text(L.s("локально, без кэша", "local, no cache"))
-                .font(StatsMetrics.small).foregroundStyle(StatsPalette.faint)
+            if model.stats.lifetimeTokens > 0 {
+                Text(L.s("С КЭШЕМ ЗА ВСЁ ВРЕМЯ", "WITH CACHE, ALL TIME"))
+                    .font(StatsMetrics.small).tracking(0.8)
+                    .foregroundStyle(StatsPalette.key)
+                Text(Fmt.tokens(model.stats.lifetimeTokens))
+                    .font(StatsMetrics.small).monospacedDigit()
+                    .foregroundStyle(StatsPalette.value)
+            }
         }
     }
 }

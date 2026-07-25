@@ -19,13 +19,26 @@ public struct UsageStats: Sendable, Equatable {
     /// Сессий. Из кэша claude, поэтому совпадает с его вкладкой Stats;
     /// при запасном скане это число транскриптов с работой.
     public let transcripts: Int
+    /// Полный объём за всё время, включая чтение и запись кэша.
+    ///
+    /// Дневные цифры этого не включают: и claude в своей вкладке Stats, и наш
+    /// график считают только input+output. Разница огромная, на моей машине
+    /// 8.0b против 36.9m, потому что 99.5% объёма это чтение кэша. Показываем
+    /// отдельной строкой, чтоб не было ощущения, что счётчик врёт.
+    public let lifetimeTokens: Int
+    /// Дата, до которой (включительно) кэш claude достоверен. Дни после неё
+    /// берём из транскриптов: кэш пересчитывается раз в сутки.
+    public let cacheUpTo: String?
     public let bestStreak: Int
     public let currentStreak: Int
     public let scannedAt: Date
 
     public init(days: [String: [String: Int]], hours: [String: [String: Int]],
                 requests: [String: Int], transcripts: Int,
-                bestStreak: Int, currentStreak: Int, scannedAt: Date) {
+                bestStreak: Int, currentStreak: Int, scannedAt: Date,
+                lifetimeTokens: Int = 0, cacheUpTo: String? = nil) {
+        self.lifetimeTokens = lifetimeTokens
+        self.cacheUpTo = cacheUpTo
         self.days = days
         self.hours = hours
         self.requests = requests
@@ -37,7 +50,8 @@ public struct UsageStats: Sendable, Equatable {
 
     public static let empty = UsageStats(days: [:], hours: [:], requests: [:], transcripts: 0,
                                          bestStreak: 0, currentStreak: 0,
-                                         scannedAt: Date(timeIntervalSince1970: 0))
+                                         scannedAt: Date(timeIntervalSince1970: 0),
+                                         lifetimeTokens: 0, cacheUpTo: nil)
 
     public var isEmpty: Bool { days.isEmpty }
     public var sortedDays: [String] { days.keys.sorted() }
@@ -235,25 +249,44 @@ public enum StatsScanner {
             }
         }
 
+        // Полный объём: тут же в кэше лежат и кэшевые токены, по моделям за
+        // всё время. По дням такой разбивки нет, поэтому только итог.
+        var lifetime = 0
+        for usage in (root["modelUsage"] as? [String: Any] ?? [:]).values {
+            guard let fields = usage as? [String: Any] else { continue }
+            lifetime += CostScanner.int(fields["inputTokens"])
+                + CostScanner.int(fields["outputTokens"])
+                + CostScanner.int(fields["cacheReadInputTokens"])
+                + CostScanner.int(fields["cacheCreationInputTokens"])
+        }
+
         let (best, current) = streaks(days.keys.sorted(), now: now, calendar: calendar)
         return UsageStats(days: days, hours: [:], requests: requests,
                           transcripts: CostScanner.int(root["totalSessions"]),
-                          bestStreak: best, currentStreak: current, scannedAt: now)
+                          bestStreak: best, currentStreak: current, scannedAt: now,
+                          lifetimeTokens: lifetime,
+                          cacheUpTo: root["lastComputedDate"] as? String)
     }
 
-    /// Свежий скан перекрывает кэш: за сегодня и вчера он точнее.
+    /// Свежий скан дополняет кэш днями, которых тот ещё не посчитал.
+    ///
+    /// Строго после cacheUpTo: свежий скан читает только недавно менявшиеся
+    /// файлы, поэтому за уже посчитанный день он видит лишь часть работы и,
+    /// затирая кэш, занижал бы цифру.
     static func merge(_ cached: UsageStats, fresh: UsageStats,
                       now: Date, calendar: Calendar) -> UsageStats {
         var days = cached.days
         var requests = cached.requests
         for (day, parts) in fresh.days {
+            if let upTo = cached.cacheUpTo, day <= upTo { continue }
             days[day] = parts
             if let count = fresh.requests[day] { requests[day] = count }
         }
         let (best, current) = streaks(days.keys.sorted(), now: now, calendar: calendar)
         return UsageStats(days: days, hours: fresh.hours, requests: requests,
                           transcripts: max(cached.transcripts, fresh.transcripts),
-                          bestStreak: best, currentStreak: current, scannedAt: now)
+                          bestStreak: best, currentStreak: current, scannedAt: now,
+                          lifetimeTokens: cached.lifetimeTokens, cacheUpTo: cached.cacheUpTo)
     }
 
     /// Проход по транскриптам. Запасной путь и источник сегодняшних часов.

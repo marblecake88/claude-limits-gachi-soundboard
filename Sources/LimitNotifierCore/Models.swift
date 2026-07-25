@@ -209,9 +209,10 @@ public enum StatusBar {
 // MARK: - Форматирование времени
 
 public enum Fmt {
-    /// "35.9m", "512k", "842". Токенов бывают миллионы, полное число в узкой
-    /// колонке не читается и ломает вёрстку.
+    /// "8.0b", "35.9m", "512k", "842". С кэшем счёт идёт на миллиарды, а
+    /// "8021.0m" не читается, поэтому у миллиардов свой суффикс.
     public static func tokens(_ n: Int) -> String {
+        if n >= 1_000_000_000 { return String(format: "%.1fb", Double(n) / 1_000_000_000) }
         if n >= 1_000_000 { return String(format: "%.1fm", Double(n) / 1_000_000) }
         if n >= 1_000 { return "\(Int((Double(n) / 1000).rounded()))k" }
         return "\(n)"

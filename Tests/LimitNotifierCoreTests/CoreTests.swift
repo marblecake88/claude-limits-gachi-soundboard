@@ -1051,3 +1051,92 @@ struct StatsCacheTests {
         #expect(merged.transcripts == 44)
     }
 }
+
+// MARK: - Полный объём и склейка с кэшем
+
+@Suite("Токены с кэшем")
+struct LifetimeTokensTests {
+
+    private func cal() -> Calendar {
+        var c = Calendar(identifier: .gregorian)
+        c.timeZone = TimeZone(secondsFromGMT: 3 * 3600)!
+        return c
+    }
+
+    /// Кэш claude отдаёт дневные цифры без кэш-токенов, а в modelUsage лежит
+    /// полный объём. Разница на живых данных была 8.0b против 36.9m.
+    @Test("Полный объём берётся из modelUsage, включая кэшевые токены")
+    func lifetime() throws {
+        let json = """
+        {
+          "lastComputedDate": "2026-07-23",
+          "dailyModelTokens": [
+            {"date": "2026-07-23", "tokensByModel": {"claude-opus-4-8": 1000}}
+          ],
+          "modelUsage": {
+            "claude-opus-4-8": {"inputTokens": 100, "outputTokens": 900,
+                                "cacheReadInputTokens": 500000, "cacheCreationInputTokens": 9000},
+            "claude-fable-5": {"inputTokens": 0, "outputTokens": 0,
+                               "cacheReadInputTokens": 90000, "cacheCreationInputTokens": 0}
+          },
+          "totalSessions": 7
+        }
+        """
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("lt-\(UUID().uuidString).json")
+        try json.write(to: url, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let now = StatsSlicer.isoDate("2026-07-24")!
+        let stats = try #require(StatsScanner.readCache(url, now: now, calendar: cal()))
+        #expect(stats.lifetimeTokens == 100 + 900 + 500_000 + 9_000 + 90_000)
+        // Дневная цифра осталась без кэша, как у claude.
+        #expect(stats.days["2026-07-23"]?["Opus 4.8"] == 1000)
+        #expect(stats.cacheUpTo == "2026-07-23")
+    }
+
+    /// Регресс: свежий скан читает только недавно менявшиеся файлы, поэтому за
+    /// уже посчитанный кэшем день видит лишь часть работы. Затирать им кэш
+    /// нельзя, иначе цифра за этот день падает.
+    @Test("Свежий скан не затирает дни, которые кэш уже посчитал")
+    func freshDoesNotClobberCountedDays() {
+        let now = StatsSlicer.isoDate("2026-07-24")!
+        let cached = UsageStats(days: ["2026-07-23": ["Opus 4.8": 5_000_000]],
+                                hours: [:], requests: [:], transcripts: 44,
+                                bestStreak: 1, currentStreak: 1, scannedAt: now,
+                                lifetimeTokens: 8_000_000_000, cacheUpTo: "2026-07-23")
+        // Скан увидел лишь остаток работы за 23-е плюс полный день 24-го.
+        let fresh = UsageStats(days: ["2026-07-23": ["Opus 4.8": 12_000],
+                                      "2026-07-24": ["Opus 5": 300_000]],
+                               hours: ["21": ["Opus 5": 300_000]], requests: ["2026-07-24": 42],
+                               transcripts: 3, bestStreak: 1, currentStreak: 1, scannedAt: now)
+        let merged = StatsScanner.merge(cached, fresh: fresh, now: now, calendar: cal())
+
+        #expect(merged.days["2026-07-23"]?["Opus 4.8"] == 5_000_000)   // кэш не тронут
+        #expect(merged.days["2026-07-24"]?["Opus 5"] == 300_000)       // новый день добавлен
+        #expect(merged.lifetimeTokens == 8_000_000_000)
+        #expect(merged.cacheUpTo == "2026-07-23")
+        #expect(merged.currentStreak == 2)
+    }
+
+    @Test("Без даты в кэше свежие данные применяются ко всем дням")
+    func noCacheDateMergesAll() {
+        let now = StatsSlicer.isoDate("2026-07-24")!
+        let cached = UsageStats(days: ["2026-07-23": ["Opus 4.8": 10]], hours: [:], requests: [:],
+                               transcripts: 1, bestStreak: 1, currentStreak: 1, scannedAt: now,
+                               lifetimeTokens: 0, cacheUpTo: nil)
+        let fresh = UsageStats(days: ["2026-07-23": ["Opus 4.8": 999]], hours: [:], requests: [:],
+                              transcripts: 1, bestStreak: 1, currentStreak: 1, scannedAt: now)
+        let merged = StatsScanner.merge(cached, fresh: fresh, now: now, calendar: cal())
+        #expect(merged.days["2026-07-23"]?["Opus 4.8"] == 999)
+    }
+
+    @Test("Форматирование больших чисел")
+    func formatting() {
+        #expect(Fmt.tokens(8_021_000_000) == "8.0b")
+        #expect(Fmt.tokens(999_999_999) == "1000.0m")
+        #expect(Fmt.tokens(36_900_000) == "36.9m")
+        #expect(Fmt.tokens(1500) == "2k")
+        #expect(Fmt.tokens(42) == "42")
+    }
+}
