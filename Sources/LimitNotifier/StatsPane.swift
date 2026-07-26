@@ -121,7 +121,7 @@ struct StatsPane: View {
                 legend(s.models)
             }
             ColumnsChart(columns: s.columns, models: s.models)
-                .frame(height: 104)
+                .frame(height: 104)   // включая подписи оси снизу
         }
     }
 
@@ -208,24 +208,65 @@ struct StatsPane: View {
 
 // MARK: - Столбцы
 
-/// Стековые столбцы: по одному на день, час или неделю.
+/// Стековые столбцы: по одному на день, час или неделю, с подписанной осью.
 private struct ColumnsChart: View {
     let columns: [StatsColumn]
     let models: [String]
 
+    /// Пик столбца: без него высота ни о чём не говорит.
+    private var peak: Int { columns.map(\.total).max() ?? 0 }
+    private var gap: CGFloat { columns.count > 40 ? 1 : 2 }
+
     var body: some View {
-        GeometryReader { geo in
-            let max = columns.map(\.total).max() ?? 1
-            let gap: CGFloat = columns.count > 40 ? 1 : 2
-            let width = (geo.size.width - CGFloat(columns.count - 1) * gap)
-                / CGFloat(Swift.max(columns.count, 1))
-            HStack(alignment: .bottom, spacing: gap) {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .top, spacing: 5) {
+                GeometryReader { geo in
+                    let width = (geo.size.width - CGFloat(columns.count - 1) * gap)
+                        / CGFloat(Swift.max(columns.count, 1))
+                    HStack(alignment: .bottom, spacing: gap) {
+                        ForEach(columns, id: \.id) { column in
+                            bar(column, max: peak, height: geo.size.height)
+                                .frame(width: Swift.max(width, 1))
+                        }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                }
+                // Потолок шкалы сбоку, чтоб не спорил со столбцами за место.
+                Text(Fmt.tokens(peak))
+                    .font(StatsMetrics.tiny).monospacedDigit()
+                    .foregroundStyle(StatsPalette.faint)
+                    .frame(width: 34, alignment: .leading)
+            }
+            axis()
+        }
+    }
+
+    /// Подписи под столбцами. Когда колонок мало, подписываем каждую, иначе
+    /// только края и середину: иначе даты сливаются в кашу.
+    @ViewBuilder
+    private func axis() -> some View {
+        if columns.count <= 12 {
+            HStack(alignment: .top, spacing: gap) {
                 ForEach(columns, id: \.id) { column in
-                    bar(column, max: max, height: geo.size.height)
-                        .frame(width: Swift.max(width, 1))
+                    Text(column.tick)
+                        .font(StatsMetrics.tiny).monospacedDigit()
+                        .foregroundStyle(StatsPalette.faint)
+                        .lineLimit(1).minimumScaleFactor(0.7)
+                        .frame(maxWidth: .infinity)
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+            .padding(.trailing, 39)   // столько занимает подпись потолка справа
+        } else {
+            HStack(spacing: 4) {
+                Text(columns.first?.tick ?? "")
+                Spacer(minLength: 2)
+                Text(columns[columns.count / 2].tick)
+                Spacer(minLength: 2)
+                Text(columns.last?.tick ?? "")
+            }
+            .font(StatsMetrics.tiny).monospacedDigit()
+            .foregroundStyle(StatsPalette.faint)
+            .padding(.trailing, 39)
         }
     }
 
@@ -325,5 +366,7 @@ enum StatsPalette {
 enum StatsMetrics {
     static let font = Font.system(size: 11, design: .monospaced)
     static let small = Font.system(size: 10, design: .monospaced)
+    /// Для подписей осей: они не должны спорить с данными за внимание.
+    static let tiny = Font.system(size: 9, design: .monospaced)
     static let big = Font.system(size: 16, design: .monospaced)
 }

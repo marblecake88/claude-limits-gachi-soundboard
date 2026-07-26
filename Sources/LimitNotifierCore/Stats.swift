@@ -156,7 +156,8 @@ public enum StatsSlicer {
                                      now: Date, calendar: Calendar) -> [StatsColumn] {
         if period == .today {
             return stats.hours.keys.sorted().map {
-                StatsColumn(id: $0, tick: $0, parts: stats.hours[$0] ?? [:])
+                // "21:00" читается как время, голое "21" выглядит как число.
+                StatsColumn(id: $0, tick: "\($0):00", parts: stats.hours[$0] ?? [:])
             }
         }
         let picked = days(stats, period: period, now: now, calendar: calendar)
