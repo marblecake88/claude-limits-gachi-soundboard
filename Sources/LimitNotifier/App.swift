@@ -23,6 +23,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var popover: NSPopover?
     private var observer: AnyCancellable?
 
+    private let marquee = Marquee()          // 90 точек в секунду, разгон 0.7 с, два проезда
+    private var marqueeTimer: Timer?
+    private var marqueeTape: NSAttributedString?
+    private var marqueeWindow: CGFloat = 0
+    private var marqueePeriod: Double = 0
+    private var runStart: Date?
+    private var holdUntil = Date.distantFuture
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.button?.target = self
@@ -84,23 +92,149 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.setFrame(frame, display: true)
     }
 
-    /// Строка вида 55/78/2h15, каждое число своим цветом.
+    /// Строка вида 55/78/2h15/4d, каждое число своим цветом.
     private func redraw() {
-        let p = StatusBar.parts(from: model.snapshot, now: model.tick)
-        let font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
-        let line = NSMutableAttributedString()
+        guard let button = statusItem?.button else { return }
+        let limits = limitsLine()
 
+        guard !model.ready.isEmpty else {
+            // Спокойное состояние. Рисуем той же картинкой, что и во время
+            // движения: если в покое отдать строку системе как текст, а в
+            // движении подменять картинкой, текст прыгает на пару точек по
+            // вертикали. Один путь отрисовки на оба состояния, никаких стыков.
+            stopMarquee()
+            marqueeTape = limits
+            marqueeWindow = ceil(limits.size().width)
+            drawTape(offset: 0)
+            return
+        }
+        // Есть кого позвать: строка превращается в ленту, где лимиты первый
+        // элемент. Обрезку по окну и смещение тексту в кнопке не задать, поэтому
+        // и в покое, и в движении рисуем сами.
+        startMarquee(limits: limits)
+    }
+
+    private func limitsLine() -> NSAttributedString {
+        let p = StatusBar.parts(from: model.snapshot, now: model.tick)
+        let line = NSMutableAttributedString()
         func add(_ text: String, _ color: NSColor) {
             line.append(NSAttributedString(string: text,
-                                           attributes: [.font: font, .foregroundColor: color]))
+                                           attributes: [.font: Self.font, .foregroundColor: color]))
         }
         add(p.session, Self.color(p.sessionLevel))
         add("/", Self.separator)
         add(p.weekly, Self.color(p.weeklyLevel))
         add("/", Self.separator)
         add(p.time, Self.timeColor)
+        add("/", Self.separator)
+        add(p.weeklyTime, Self.timeColor)
+        return line
+    }
 
-        statusItem?.button?.attributedTitle = line
+    /// Размер берём у самой строки меню, чтобы совпадать с часами и прочими
+    /// системными надписями: там 13 точек, а не 12. Цифры моноширинные, иначе
+    /// строка дёргалась бы при каждой смене процента.
+    private static let font: NSFont = {
+        let size = NSFont.menuBarFont(ofSize: 0).pointSize
+        return NSFont.monospacedDigitSystemFont(ofSize: size, weight: .regular)
+    }()
+
+    /// Цвета имён: три ступени синего. Холодная гамма намеренно, чтобы имена не
+    /// читались как продолжение шкалы лимитов, где зелёный, жёлтый и розовый
+    /// уже значат "насколько всё плохо".
+    private static let projectColors: [NSColor] = [
+        NSColor(srgbRed: 0xa8/255, green: 0xd8/255, blue: 1.0, alpha: 1),
+        NSColor(srgbRed: 0x6a/255, green: 0xa9/255, blue: 0xe8/255, alpha: 1),
+        NSColor(srgbRed: 0x4a/255, green: 0x7f/255, blue: 0xc0/255, alpha: 1),
+    ]
+
+    // MARK: - Лента
+
+    private func startMarquee(limits: NSAttributedString) {
+        // Один период: лимиты, разделитель, имена, разделитель.
+        let tape = NSMutableAttributedString(attributedString: limits)
+        tape.append(separatorPiece())
+        for (index, name) in model.ready.enumerated() {
+            let color = Self.projectColors[index % Self.projectColors.count]
+            tape.append(NSAttributedString(string: "✓ " + name,
+                                           attributes: [.font: Self.font, .foregroundColor: color]))
+            tape.append(separatorPiece())
+        }
+        marqueeWindow = ceil(limits.size().width)
+        marqueePeriod = ceil(tape.size().width)
+
+        // Рисуем три периода: пока второй уезжает, третий уже входит в окно,
+        // поэтому в конце пути в окне снова лимиты и возврат на ноль не виден.
+        let full = NSMutableAttributedString()
+        for _ in 0..<(marquee.passes + 1) { full.append(tape) }
+        marqueeTape = full
+
+        guard marqueeTimer == nil else { return }
+        holdUntil = Date().addingTimeInterval(1)   // секунда на то, чтоб заметить появление
+        runStart = nil
+        marqueeTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.tickMarquee() }
+        }
+        drawTape(offset: 0)
+    }
+
+    private func separatorPiece() -> NSAttributedString {
+        NSAttributedString(string: "   ·   ",
+                           attributes: [.font: Self.font, .foregroundColor: Self.separator])
+    }
+
+    private func stopMarquee() {
+        marqueeTimer?.invalidate()
+        marqueeTimer = nil
+        marqueeTape = nil
+        runStart = nil
+    }
+
+    private func tickMarquee() {
+        guard marqueeTape != nil else { stopMarquee(); return }
+        let now = Date()
+        if let start = runStart {
+            let t = now.timeIntervalSince(start)
+            let full = marquee.duration(period: marqueePeriod)
+            if t >= full {
+                runStart = nil
+                holdUntil = now.addingTimeInterval(marquee.hold(period: marqueePeriod))
+                drawTape(offset: 0)
+            } else {
+                drawTape(offset: marquee.offset(at: t, period: marqueePeriod))
+            }
+        } else if now >= holdUntil {
+            runStart = now
+        }
+    }
+
+    /// Кадр ленты: окно шириной ровно как строка лимитов, текст сдвинут влево.
+    ///
+    /// Рисуем через drawingHandler, а не lockFocus. Так система сама зовёт нас в
+    /// нужном разрешении (на ретине иначе выходит мыло) и в том же внешнем виде,
+    /// что у кнопки: адаптивные цвета вне этого контекста резолвятся для светлой
+    /// темы и на тёмном меню-баре смотрятся грязно.
+    private func drawTape(offset: Double) {
+        guard let tape = marqueeTape, let button = statusItem?.button else { return }
+        // Высота как у строки меню: если картинка ниже, кнопка её центрирует
+        // сама и текст уезжает относительно соседних иконок.
+        let height = NSStatusBar.system.thickness
+        let size = NSSize(width: marqueeWindow, height: height)
+        // draw(at:) принимает левый НИЗ блока текста, а не базовую линию. Если
+        // прибавить к нему ещё и descender, текст уезжает вверх почти на три
+        // точки: именно так он и разъезжался с тем, что рисует система.
+        // Поэтому просто центрируем блок по его же высоте.
+        let top = ((height - tape.size().height) / 2).rounded()
+
+        let image = NSImage(size: size, flipped: false) { _ in
+            tape.draw(at: NSPoint(x: -offset, y: top))
+            return true
+        }
+        image.isTemplate = false   // иначе macOS перекрасит всё в монохром
+
+        button.attributedTitle = NSAttributedString(string: "")
+        button.image = image
+        button.imagePosition = .imageOnly
     }
 
     /// Пороги: до 60 зелёный как гейджи в панели, 60 жёлтый, 79 розовый, 89 красный.
@@ -168,6 +302,72 @@ final class AppModel: ObservableObject {
     /// Во сколько мак разбудит сам себя, если это настроено. Читаем из pmset.
     @Published private(set) var wakeAt: String?
 
+    // MARK: - Уведомления об окончании
+
+    /// Проекты, где claude закончил работу и ждёт человека. Порядок сохраняем:
+    /// цвет в строке меню закреплён за местом в очереди.
+    @Published private(set) var ready: [String] = []
+    /// То же, но не гаснет по клику: чтобы в панели было видно, кто закончил,
+    /// даже если зов в строке меню уже погашен.
+    @Published private(set) var recent: [Finished] = []
+
+    struct Finished: Identifiable, Equatable {
+        let name: String
+        let at: Date
+        var id: String { name }
+    }
+    @Published private(set) var notifyOn = HookInstaller.isInstalled
+    private var readyTask: Task<Void, Never>?
+
+    /// Раз в две секунды дочитываем, что написал хук. Опрос, а не слежение за
+    /// файлом: события редкие, а FSEvents на перезаписываемый файл капризны.
+    private func watchReady() {
+        readyTask?.cancel()
+        guard notifyOn else { ready = []; return }
+        readyTask = Task { [weak self] in
+            while !Task.isCancelled {
+                await self?.pickUpReady()
+                try? await Task.sleep(for: .seconds(2))
+            }
+        }
+    }
+
+    private func pickUpReady() {
+        let events = ReadyLog.drain()
+        guard !events.isEmpty else { return }
+        for event in events {
+            let name = event.project
+            // Если человек уже смотрит в это окно, звать незачем.
+            if FocusProbe.looksFocused(project: name) {
+                Log.write("готово \(name), но окно в фокусе, не зову")
+                continue
+            }
+            if !ready.contains(name) { ready.append(name) }
+            recent.removeAll { $0.name == name }
+            recent.insert(Finished(name: name, at: event.at), at: 0)
+            if recent.count > 5 { recent.removeLast(recent.count - 5) }
+            Log.write("готово: \(name) · \(FocusProbe.describe())")
+        }
+    }
+
+    /// Гасим зов: человек открыл панель, значит увидел.
+    func clearReady() {
+        guard !ready.isEmpty else { return }
+        ready = []
+    }
+
+    func setNotify(_ on: Bool) {
+        let error = on ? HookInstaller.install() : HookInstaller.remove()
+        if let error {
+            Log.write("хук не установился: \(error)")
+            return
+        }
+        notifyOn = HookInstaller.isInstalled
+        Log.write("уведомления об окончании \(notifyOn ? "включены" : "выключены")")
+        if !notifyOn { ready = [] }
+        watchReady()
+    }
+
 
     /// Какой экран показан. По умолчанию борд, но если пользователь хоть раз
     /// заходил в лимиты, панель открывается сразу на них.
@@ -177,6 +377,7 @@ final class AppModel: ObservableObject {
     func prepareForOpen() {
         screen = settings.visitedLimits ? .limits : .board
         refreshWakeState()
+        clearReady()
     }
 
     func showLimits() {
@@ -294,6 +495,7 @@ final class AppModel: ObservableObject {
         rescheduleKeepAlive()
         rescanSpend(force: true)
         refreshWakeState()
+        watchReady()
 
         tickTask = Task { [weak self] in
             while !Task.isCancelled {
@@ -414,6 +616,68 @@ final class AppModel: ObservableObject {
 
     func openReleases() {
         NSWorkspace.shared.open(UpdateCheck.releasesURL)
+    }
+
+    /// Окно с объяснением, что даёт эта штука и что для неё нужно.
+    ///
+    /// Два согласия в одном месте: правка ~/.claude/settings.json (туда идёт
+    /// хук) и доступ к Accessibility (без него не узнать, смотришь ли ты уже в
+    /// то окно). Ни то, ни другое не делаем молча.
+    func showNotifyHelp() {
+        let alert = NSAlert()
+        alert.messageText = L.s("Уведомления об окончании задачи",
+                                "Notify when a task finishes")
+        let ru = [
+            "Когда claude в другом окне закончит работу и будет ждать вас, строка меню",
+            "прокрутит имя проекта. Никаких звуков и всплывающих окон.",
+            "",
+            "Для этого нужно два разрешения:",
+            "",
+            "1. Хук в ~/.claude/settings.json. Claude Code сам сообщит нам, что закончил;",
+            "   ваши остальные настройки и хуки останутся на месте.",
+            "2. Доступ к Accessibility. Нужен ровно для одного: понять, смотрите ли вы",
+            "   прямо сейчас в то окно, и не звать вас, если и так смотрите.",
+            "",
+            "Без второго тоже работает, просто зовёт всегда. Выключить можно в любой",
+            "момент этой же кнопкой, хук удалится.",
+        ].joined(separator: "\n")
+        let en = [
+            "When claude finishes in another window and waits for you, the menu bar",
+            "scrolls the project name past. No sounds, no popups.",
+            "",
+            "This needs two permissions:",
+            "",
+            "1. A hook in ~/.claude/settings.json, so Claude Code tells us it finished.",
+            "   Your other settings and hooks are left untouched.",
+            "2. Accessibility access, for exactly one thing: to tell whether you are",
+            "   already looking at that window, and stay quiet if you are.",
+            "",
+            "It works without the second one too, it just always calls you. You can turn",
+            "this off any time with the same button, and the hook gets removed.",
+        ].joined(separator: "\n")
+
+        let width: CGFloat = 500
+        let body = NSTextField(wrappingLabelWithString: L.s(ru, en))
+        body.alignment = .left
+        body.font = .systemFont(ofSize: 12)
+        body.preferredMaxLayoutWidth = width
+        let height = body.sizeThatFits(NSSize(width: width,
+                                              height: .greatestFiniteMagnitude)).height
+        let box = NSView(frame: NSRect(x: 0, y: 0, width: width, height: height))
+        body.frame = NSRect(x: 0, y: 0, width: width, height: height)
+        box.addSubview(body)
+        alert.accessoryView = box
+
+        alert.addButton(withTitle: L.s("Включить", "Turn on"))
+        alert.addButton(withTitle: L.s("Отмена", "Cancel"))
+
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        setNotify(true)
+        // Диалог доступа показываем после установки хука: если человек откажет,
+        // уведомления всё равно будут работать, просто без проверки фокуса.
+        if !FocusProbe.isTrusted { FocusProbe.requestAccess() }
     }
 
     // MARK: - Настройки

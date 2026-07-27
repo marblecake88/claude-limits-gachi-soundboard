@@ -1180,3 +1180,260 @@ struct WakeScheduleTests {
         #expect(WakeSchedule.scheduled(in: "") == nil)
     }
 }
+
+// MARK: - Недельный остаток в строке меню
+
+@Suite("Остаток недельного лимита")
+struct WeeklyTimeTests {
+
+    private let now = utc(2026, 7, 25, 12, 0)
+
+    /// От суток и выше только дни, ниже только часы: на недельном горизонте
+    /// минуты в строке меню только мельтешат.
+    @Test("Крупные единицы: дни или часы")
+    func coarse() {
+        #expect(StatusBar.coarse(now.addingTimeInterval(4 * 86400 + 6 * 3600), from: now) == "4d")
+        #expect(StatusBar.coarse(now.addingTimeInterval(86400), from: now) == "1d")
+        // Чуть меньше суток это уже часы, а не "0d".
+        #expect(StatusBar.coarse(now.addingTimeInterval(86400 - 60), from: now) == "23h")
+        #expect(StatusBar.coarse(now.addingTimeInterval(11 * 3600 + 40 * 60), from: now) == "11h")
+        #expect(StatusBar.coarse(now.addingTimeInterval(30 * 60), from: now) == "0h")
+        // Прошедшее и пустое дают прочерк, а не отрицательное время.
+        #expect(StatusBar.coarse(now.addingTimeInterval(-3600), from: now) == "--")
+        #expect(StatusBar.coarse(nil, from: now) == "--")
+    }
+
+    /// Недельный остаток берётся у общего недельного лимита, не у скоупного.
+    @Test("В строке меню появляется недельный остаток")
+    func inStatusLine() throws {
+        let snap = try #require(UsageClient.parse(realOutput, now: utc(2026, 7, 22, 12, 0)))
+        let parts = StatusBar.parts(from: snap, now: utc(2026, 7, 22, 12, 0))
+        // Эталон: недельный сбрасывается 24 июля в 9pm Рига, это через 2 суток.
+        #expect(parts.weeklyTime == "2d")
+        #expect(parts.time == "7h10")
+        #expect(parts.session == "26")
+        #expect(parts.weekly == "83")
+    }
+
+    @Test("Без снимка недельный остаток тоже прочерк")
+    func noSnapshot() {
+        #expect(StatusBar.parts(from: nil, now: now).weeklyTime == "--")
+    }
+}
+
+// MARK: - Лента в строке меню
+
+@Suite("Движение ленты")
+struct MarqueeTests {
+
+    private let m = Marquee()   // 90 точек в секунду, разгон 0.7 с, два проезда
+
+    /// Профиль трапеция: разгон, ровный ход, торможение. Путь и время должны
+    /// сходиться, иначе на стыках будет видна ступенька скорости.
+    @Test("Края пути: ноль в начале, полный путь в конце")
+    func endpoints() {
+        let period = 200.0
+        let total = m.distance(period: period)
+        #expect(total == 400)
+        #expect(m.offset(at: 0, period: period) == 0)
+        #expect(m.offset(at: -1, period: period) == 0)
+        let full = m.duration(period: period)
+        #expect(abs(m.offset(at: full, period: period) - total) < 0.001)
+        #expect(abs(m.offset(at: full + 5, period: period) - total) < 0.001)
+    }
+
+    @Test("Лента едет только вперёд и без рывков")
+    func monotonicAndSmooth() {
+        let period = 240.0
+        let full = m.duration(period: period)
+        var previous = 0.0
+        var maxJump = 0.0
+        // Шаг мельче кадра, чтобы поймать разрыв на стыке участков.
+        for i in 1...2000 {
+            let t = full * Double(i) / 2000
+            let x = m.offset(at: t, period: period)
+            #expect(x >= previous - 0.0001, "лента поехала назад в \(t)")
+            maxJump = max(maxJump, x - previous)
+            previous = x
+        }
+        // За такой шаг лента не может пройти больше, чем скорость помножить на шаг.
+        #expect(maxJump < m.speed * (full / 2000) * 1.05)
+    }
+
+    /// В середине прогона лента должна идти ровно на рабочей скорости.
+    @Test("На ровном участке скорость та самая")
+    func cruiseSpeed() {
+        let period = 300.0
+        let full = m.duration(period: period)
+        let mid = full / 2, dt = 0.05
+        let v = (m.offset(at: mid + dt, period: period)
+                 - m.offset(at: mid - dt, period: period)) / (dt * 2)
+        #expect(abs(v - m.speed) < 0.5)
+    }
+
+    /// А на старте и на финише заметно медленнее: это и есть доводчик.
+    @Test("Старт и финиш мягкие")
+    func softEnds() {
+        let period = 300.0
+        let full = m.duration(period: period)
+        let dt = 0.05
+        let vStart = m.offset(at: dt, period: period) / dt
+        let vEnd = (m.offset(at: full, period: period)
+                    - m.offset(at: full - dt, period: period)) / dt
+        #expect(vStart < m.speed * 0.25, "старт слишком резкий")
+        #expect(vEnd < m.speed * 0.25, "финиш слишком резкий")
+    }
+
+    /// Разгон занимает ровно speed*ramp/2 точек, иначе стык не сойдётся.
+    @Test("Длительность складывается из разгона, ровного хода и торможения")
+    func durationMath() {
+        let period = 500.0
+        let total = m.distance(period: period)
+        let cruise = total - m.rampDistance * 2
+        #expect(abs(m.duration(period: period) - (m.ramp * 2 + cruise / m.speed)) < 0.001)
+        // Пауза считается по одному проезду, а не по всей поездке.
+        #expect(abs(m.hold(period: period)
+                    - m.duration(period: period) / 2 * 4) < 0.001)
+    }
+
+    /// Короткая лента: разогнаться не успеваем, профиль треугольный.
+    @Test("Очень короткий путь не ломает математику")
+    func triangularProfile() {
+        let period = 8.0
+        let full = m.duration(period: period)
+        #expect(full > 0)
+        #expect(abs(m.offset(at: full, period: period) - m.distance(period: period)) < 0.001)
+        #expect(m.offset(at: full / 2, period: period) > 0)
+    }
+
+    @Test("Нулевой период не роняет")
+    func zeroPeriod() {
+        #expect(m.duration(period: 0) == 0)
+        #expect(m.offset(at: 1, period: 0) == 0)
+    }
+}
+
+// MARK: - События от хука
+
+@Suite("События готовности")
+struct ReadyLogTests {
+
+    private let now = utc(2026, 7, 27, 12, 0)
+
+    @Test("Разбор того, что пишет хук")
+    func parse() {
+        let text = """
+        {"hook_event_name":"Stop","session_id":"abc","cwd":"/Users/k/PycharmProjects/drpmonitor"}
+        {"hook_event_name":"Stop","session_id":"def","cwd":"/Users/k/PycharmProjects/auratg"}
+        """
+        let events = ReadyLog.parse(text, now: now)
+        #expect(events.count == 2)
+        #expect(events.map(\.project) == ["drpmonitor", "auratg"])
+        #expect(events[0].sessionId == "abc")
+    }
+
+    /// Приложение опрашивает лимиты через сам claude, и это тоже даёт Stop.
+    /// Если не отфильтровать, оно будет звать само себя каждые десять минут.
+    @Test("Свой собственный опрос лимитов не считается событием")
+    func ignoresOwnProbe() {
+        let text = #"{"cwd":"/Users/k/Library/Application Support/LimitNotifier/probe"}"#
+        #expect(ReadyLog.parse(text, now: now).isEmpty)
+        #expect(ReadyLog.isOurProbe(cwd: "/Users/k/Library/Application Support/LimitNotifier/probe"))
+        #expect(ReadyLog.isOurProbe(cwd: "/Users/k/PycharmProjects/drpmonitor") == false)
+    }
+
+    @Test("Мусор в файле пропускается, а не роняет разбор")
+    func skipsGarbage() {
+        let text = """
+        не json совсем
+        {"cwd":""}
+        {"нет":"cwd"}
+        {"cwd":"/tmp/real"}
+        """
+        let events = ReadyLog.parse(text, now: now)
+        #expect(events.map(\.project) == ["real"])
+    }
+
+    @Test("Чтение опустошает файл, чтобы он не рос")
+    func drainEmptiesFile() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ready-\(UUID().uuidString).jsonl")
+        try #"{"cwd":"/tmp/one"}"#.write(to: url, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        #expect(ReadyLog.drain(at: url, now: now).map(\.project) == ["one"])
+        // Второй заход уже ничего не находит.
+        #expect(ReadyLog.drain(at: url, now: now).isEmpty)
+    }
+}
+
+// MARK: - Установка хука в чужой файл настроек
+
+@Suite("Хук в настройках claude")
+struct HookInstallerTests {
+
+    private let cmd = "/Users/k/Library/Application Support/LimitNotifier/on-stop.sh"
+
+    /// Главное требование: чужие настройки и чужие хуки остаются целыми.
+    @Test("Свой хук добавляется, чужое не трогается")
+    func keepsOtherSettings() {
+        let before: [String: Any] = [
+            "model": "opus",
+            "hooks": [
+                "Stop": [["hooks": [["type": "command", "command": "/чужой/скрипт.sh"]]]],
+                "PreToolUse": [["matcher": "Bash",
+                                "hooks": [["type": "command", "command": "/чужой/bash.sh"]]]],
+            ],
+        ]
+        let after = HookInstaller.settings(byInstallingInto: before, command: cmd)
+
+        #expect(after["model"] as? String == "opus")
+        let hooks = after["hooks"] as? [String: Any]
+        #expect((hooks?["PreToolUse"] as? [[String: Any]])?.count == 1)
+        let stop = hooks?["Stop"] as? [[String: Any]] ?? []
+        #expect(stop.count == 2, "чужой хук Stop должен остаться рядом с нашим")
+        #expect(HookInstaller.installed(in: after, command: cmd))
+    }
+
+    @Test("Повторная установка не дублирует хук")
+    func idempotent() {
+        var root: [String: Any] = [:]
+        root = HookInstaller.settings(byInstallingInto: root, command: cmd)
+        root = HookInstaller.settings(byInstallingInto: root, command: cmd)
+        let stop = (root["hooks"] as? [String: Any])?["Stop"] as? [[String: Any]] ?? []
+        #expect(stop.count == 1)
+    }
+
+    @Test("Удаляется только свой хук")
+    func removesOnlyOurs() {
+        var root: [String: Any] = [
+            "hooks": ["Stop": [["hooks": [["type": "command", "command": "/чужой/скрипт.sh"]]]]],
+        ]
+        root = HookInstaller.settings(byInstallingInto: root, command: cmd)
+        root = HookInstaller.settings(byRemovingFrom: root, command: cmd)
+
+        let stop = (root["hooks"] as? [String: Any])?["Stop"] as? [[String: Any]] ?? []
+        #expect(stop.count == 1)
+        #expect(HookInstaller.installed(in: root, command: cmd) == false)
+        let handlers = stop[0]["hooks"] as? [[String: Any]] ?? []
+        #expect(handlers.first?["command"] as? String == "/чужой/скрипт.sh")
+    }
+
+    /// Если своих хуков больше нет, пустых разделов оставлять не надо.
+    @Test("После удаления пустые разделы подчищаются")
+    func cleansUpEmpty() {
+        var root: [String: Any] = ["model": "opus"]
+        root = HookInstaller.settings(byInstallingInto: root, command: cmd)
+        root = HookInstaller.settings(byRemovingFrom: root, command: cmd)
+        #expect(root["hooks"] == nil)
+        #expect(root["model"] as? String == "opus")
+    }
+
+    @Test("Скрипт не блокирует claude и дописывает в наш файл")
+    func scriptShape() {
+        let s = HookInstaller.script(logPath: "/tmp/ready.jsonl")
+        #expect(s.hasPrefix("#!/bin/bash"))
+        #expect(s.contains(">> \"/tmp/ready.jsonl\""))
+        #expect(s.contains("exit 0"))
+    }
+}

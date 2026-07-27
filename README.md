@@ -1,6 +1,6 @@
 # claude limits gachi soundboard
 
-[![release](https://img.shields.io/badge/release-v1.6.1-ff598c)](https://github.com/marblecake88/claude-limits-gachi-soundboard/releases)
+[![release](https://img.shields.io/badge/release-v1.7-ff598c)](https://github.com/marblecake88/claude-limits-gachi-soundboard/releases)
 [![downloads](https://img.shields.io/github/downloads/marblecake88/claude-limits-gachi-soundboard/total)](https://github.com/marblecake88/claude-limits-gachi-soundboard/releases)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 ![macos](https://img.shields.io/badge/macos-14%2B-black)
@@ -21,6 +21,9 @@
 - трата в долларах по тарифам API, считается локально из транскриптов
 - статистика: жмёшь STATS в панели лимитов, окно разъезжается вправо. токены по дням,
   активность, модели, стрики. периоды сегодня/неделя/месяц/всё
+- уведомления об окончании: когда claude в другом окне закончил и ждёт вас, строка меню
+  прокручивает имя проекта. включается кнопкой в панели, ставит хук в настройки claude.
+  если вы смотрите в то же окно, приложение молчит (для этого нужен доступ к Accessibility)
 - интерфейс на английском, если система не русская. переключатель RU/EN в панели
 
 Строка меню всегда показывает лимиты. По клику открывается борд, лимиты вторым
@@ -107,6 +110,9 @@ Claude overnight so by the time you wake up you have 99% of the 5-hour limit and
 - statistics: hit STATS on the limits panel and the window expands to the right — tokens per day,
   activity, models, streaks. today / week / month / all time. per-day numbers exclude cache
   (same as claude), the full volume with cache is shown on its own line
+- ready alerts: when claude finishes in another window and waits for you, the menu bar scrolls
+  the project name past. turn it on in the panel, it installs a hook into claude's settings.
+  if you're looking at that same window, the app stays quiet (needs Accessibility access for that)
 - the UI is English unless your system is Russian, with an RU/EN switch in the panel
 
 The menu bar always shows limits. Click opens the board, limits are the second screen.

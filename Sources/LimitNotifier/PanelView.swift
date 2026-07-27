@@ -188,7 +188,10 @@ struct PanelView: View {
                 settings: model.settings,
                 nextPingText: model.nextPingText,
                 wakeAt: model.wakeAt,
+                notifyOn: model.notifyOn,
+                recent: model.recent,
                 onKeepAlive: { model.setKeepAlive($0) },
+                onNotify: { model.notifyOn ? model.setNotify(false) : model.showNotifyHelp() },
                 onWakeHelp: { model.showWakeHelp() },
                 onAnchor: { model.setAnchor(hour: $0, minute: $1) }
             )
@@ -478,7 +481,10 @@ private struct SettingsBlock: View {
     @ObservedObject var settings: LimitNotifierCore.Settings
     let nextPingText: String
     let wakeAt: String?
+    let notifyOn: Bool
+    let recent: [AppModel.Finished]
     let onKeepAlive: (Bool) -> Void
+    let onNotify: () -> Void
     let onWakeHelp: () -> Void
     let onAnchor: (Int, Int) -> Void
 
@@ -537,6 +543,40 @@ private struct SettingsBlock: View {
 
             Note(L.s("Нужна, если закрываете мак на ночь. Вставьте команду в терминал один раз",
                      "Needed if your mac sleeps at night. Paste the command in a terminal once"))
+
+            Spacer().frame(height: 9)
+
+            RowShell {
+                RowKey("READY ALERTS")
+                Spacer(minLength: 8)
+                Button(action: onNotify) {
+                    Text(notifyOn ? L.s("ВКЛ", "ON") : L.s("НАСТРОИТЬ", "SET UP"))
+                        .font(.system(size: 10, design: .monospaced))
+                        .tracking(Metrics.trackFoot)
+                        .foregroundStyle(notifyOn ? Palette.accent : Palette.dim)
+                        .padding(.horizontal, 8).padding(.vertical, 3)
+                        .overlay(RoundedRectangle(cornerRadius: 7)
+                            .stroke(notifyOn ? Palette.accent.opacity(0.5) : Palette.line,
+                                    lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+            }
+            Note(L.s("Строка меню прокрутит имя проекта, когда claude в другом окне закончит",
+                     "The menu bar scrolls the project name when claude finishes in another window"))
+
+            // Кто закончил. Зов в строке меню гаснет по клику, а список остаётся:
+            // иначе непонятно, что именно тебя звало.
+            if !recent.isEmpty {
+                ForEach(recent) { item in
+                    RowShell {
+                        RowKey(item.name)
+                        Spacer(minLength: 8)
+                        Text(hhmm(item.at))
+                            .font(Metrics.font).monospacedDigit()
+                            .foregroundStyle(Palette.faint)
+                    }
+                }
+            }
         }
     }
 

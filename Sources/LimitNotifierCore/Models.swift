@@ -161,14 +161,18 @@ public struct StatusParts: Sendable, Equatable {
     public let session: String
     public let weekly: String
     public let time: String
+    /// Сколько осталось до сброса недельного лимита, крупно: "4d" или "11h".
+    /// Минуты тут не нужны, на таком горизонте они только шумят.
+    public let weeklyTime: String
     public let sessionLevel: Level
     public let weeklyLevel: Level
 
-    public init(session: String, weekly: String, time: String,
+    public init(session: String, weekly: String, time: String, weeklyTime: String = "--",
                 sessionLevel: Level, weeklyLevel: Level) {
         self.session = session
         self.weekly = weekly
         self.time = time
+        self.weeklyTime = weeklyTime
         self.sessionLevel = sessionLevel
         self.weeklyLevel = weeklyLevel
     }
@@ -185,9 +189,19 @@ public enum StatusBar {
         return h > 0 ? String(format: "%dh%02d", h, m) : "\(m)m"
     }
 
+    /// Остаток крупными единицами: от суток и выше только дни, ниже только часы.
+    /// Недельный лимит живёт днями, и минуты в строке меню там ни к чему.
+    public static func coarse(_ date: Date?, from now: Date = Date()) -> String {
+        guard let date else { return "--" }
+        let s = Int(date.timeIntervalSince(now))
+        if s <= 0 { return "--" }
+        let d = s / 86400
+        return d > 0 ? "\(d)d" : "\(s / 3600)h"
+    }
+
     public static func parts(from snapshot: UsageSnapshot?, now: Date = Date()) -> StatusParts {
         guard let snapshot else {
-            return StatusParts(session: "--", weekly: "--", time: "--",
+            return StatusParts(session: "--", weekly: "--", time: "--", weeklyTime: "--",
                                sessionLevel: .calm, weeklyLevel: .calm)
         }
         let session = snapshot.session
@@ -200,6 +214,7 @@ public enum StatusBar {
             session: session.map { "\($0.percent)" } ?? "--",
             weekly: weekly.map { "\($0.percent)" } ?? "--",
             time: compact(snapshot.sessionWindowActive ? session?.resetsAt : nil, from: now),
+            weeklyTime: coarse(weekly?.resetsAt, from: now),
             sessionLevel: Level(percent: session?.percent ?? 0),
             weeklyLevel: Level(percent: weekly?.percent ?? 0)
         )
