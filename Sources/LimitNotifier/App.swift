@@ -476,18 +476,31 @@ final class AppModel: ObservableObject {
             "",
             "The system has one repeat slot: this replaces your own schedule if you had one.",
         ].joined(separator: "\n")
-        alert.informativeText = L.s(ru, en)
+        // informativeText NSAlert центрирует, и абзацы разъезжаются лестницей.
+        // Поэтому весь текст держим своим полем с выравниванием по левому краю.
+        let width: CGFloat = 470
+        let body = NSTextField(wrappingLabelWithString: L.s(ru, en))
+        body.alignment = .left
+        body.font = .systemFont(ofSize: 12)
+        body.preferredMaxLayoutWidth = width
+        let bodyHeight = body.sizeThatFits(
+            NSSize(width: width, height: .greatestFiniteMagnitude)).height
 
-        // Команду кладём в поле: её можно выделить мышкой и скопировать руками,
-        // а не только кнопкой.
+        // Команду кладём в отдельное поле: её можно выделить мышкой и скопировать
+        // руками, а не только кнопкой.
         let field = NSTextField(labelWithString: cmd)
         field.isSelectable = true
         field.allowsEditingTextAttributes = false
+        field.alignment = .left
         field.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
         field.lineBreakMode = .byTruncatingTail
-        field.frame = NSRect(x: 0, y: 0, width: 430, height: 22)
-        let box = NSView(frame: NSRect(x: 0, y: 0, width: 430, height: 34))
-        field.frame.origin.y = 6
+
+        let gap: CGFloat = 12, fieldHeight: CGFloat = 22
+        let box = NSView(frame: NSRect(x: 0, y: 0, width: width,
+                                       height: bodyHeight + gap + fieldHeight))
+        field.frame = NSRect(x: 0, y: 0, width: width, height: fieldHeight)
+        body.frame = NSRect(x: 0, y: fieldHeight + gap, width: width, height: bodyHeight)
+        box.addSubview(body)
         box.addSubview(field)
         alert.accessoryView = box
 
