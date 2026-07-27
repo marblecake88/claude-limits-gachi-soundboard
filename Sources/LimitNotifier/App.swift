@@ -437,45 +437,65 @@ final class AppModel: ObservableObject {
     /// из приложения macOS считает поведением малвари и однажды за это снесла
     /// приложение из /Applications. Поэтому команду выполняет человек.
     func showWakeHelp() {
-        let cmd = WakeSchedule.command(hour: settings.anchorHour, minute: settings.anchorMinute)
+        let cmd = WakeSchedule.command(anchorHour: settings.anchorHour,
+                                       anchorMinute: settings.anchorMinute)
         let alert = NSAlert()
         alert.messageText = L.s("Разбудить мак к ночному пингу",
                                 "Wake the mac for the nightly ping")
-        alert.informativeText = L.s(
-            """
-            Если мак спит, keep-alive не сработает: будить claude некому.             Штатный способ разбудить мак по расписанию это pmset, и ему нужны права root.
+        // Собираем построчно: у многострочного литерала с переносами по бэкслешу
+        // отступ следующей строки попадает прямо в текст.
+        let ru = [
+            "Если мак спит, keep-alive не сработает: будить claude некому.",
+            "Штатный способ разбудить мак по расписанию это pmset, ему нужен root.",
+            "",
+            "Приложение прав не просит специально: запрос пароля из приложения macOS",
+            "считает поведением вредоносного ПО и однажды за это удалила приложение,",
+            "хотя подпись и нотаризация были в порядке.",
+            "",
+            "Поэтому вставьте команду в терминал сами, один раз. Она разбудит мак",
+            "к \(settings.anchorText) минус пять часов, то есть к началу окна.",
+            "",
+            "Проверить: pmset -g sched",
+            "Отменить: \(WakeSchedule.cancelCommand)",
+            "",
+            "Слот повтора в системе один: своё расписание, если было, команда заменит.",
+        ].joined(separator: "\n")
+        let en = [
+            "If the mac is asleep, keep-alive can't run: nobody wakes claude.",
+            "The standard way to wake a mac on schedule is pmset, and it needs root.",
+            "",
+            "The app deliberately never asks for privileges: a password prompt coming",
+            "from an app is what macOS treats as malware behaviour, and it once deleted",
+            "this app over exactly that, signature and notarization notwithstanding.",
+            "",
+            "So paste the command in a terminal yourself, once. It wakes the mac five",
+            "hours before \(settings.anchorText), which is when the window starts.",
+            "",
+            "Check with: pmset -g sched",
+            "Cancel with: \(WakeSchedule.cancelCommand)",
+            "",
+            "The system has one repeat slot: this replaces your own schedule if you had one.",
+        ].joined(separator: "\n")
+        alert.informativeText = L.s(ru, en)
 
-            Приложение их не просит специально. Запрос пароля из приложения macOS             считает поведением вредоносного ПО, и однажды система за это удалила             приложение, хотя подпись и нотаризация были в порядке.
+        // Команду кладём в поле: её можно выделить мышкой и скопировать руками,
+        // а не только кнопкой.
+        let field = NSTextField(labelWithString: cmd)
+        field.isSelectable = true
+        field.allowsEditingTextAttributes = false
+        field.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        field.lineBreakMode = .byTruncatingTail
+        field.frame = NSRect(x: 0, y: 0, width: 430, height: 22)
+        let box = NSView(frame: NSRect(x: 0, y: 0, width: 430, height: 34))
+        field.frame.origin.y = 6
+        box.addSubview(field)
+        alert.accessoryView = box
 
-            Поэтому вставьте команду в терминал сами, один раз:
-
-            \(cmd)
-
-            Проверить: pmset -g sched
-            Отменить: \(WakeSchedule.cancelCommand)
-
-            Слот повтора в системе один, так что своё расписание, если оно было,             команда заменит.
-            """,
-            """
-            If the mac is asleep, keep-alive can't run: there is nobody to wake claude.             The standard way to wake a mac on schedule is pmset, and it needs root.
-
-            The app deliberately never asks for it. A password prompt coming from an app             is what macOS treats as malware behaviour, and it once deleted this app over             exactly that, signature and notarization notwithstanding.
-
-            So paste the command in a terminal yourself, once:
-
-            \(cmd)
-
-            Check with: pmset -g sched
-            Cancel with: \(WakeSchedule.cancelCommand)
-
-            The system has a single repeat slot, so this replaces your own schedule if you had one.
-            """)
         alert.addButton(withTitle: L.s("Скопировать команду", "Copy command"))
         alert.addButton(withTitle: L.s("Закрыть", "Close"))
 
         NSApp.activate(ignoringOtherApps: true)
-        let answer = alert.runModal()
-        if answer == .alertFirstButtonReturn {
+        if alert.runModal() == .alertFirstButtonReturn {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(cmd, forType: .string)
             Log.write("wake command скопирована: \(cmd)")

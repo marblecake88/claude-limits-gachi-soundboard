@@ -1146,16 +1146,20 @@ struct LifetimeTokensTests {
 @Suite("Расписание пробуждения")
 struct WakeScheduleTests {
 
-    /// Будим на две минуты раньше пинга: маку нужно время подняться.
-    @Test("Команда со сдвигом на две минуты назад")
+    /// Регресс: команду считали от якоря как есть, и мак будился к концу окна.
+    /// Якорь 08:45 значит "к 8:45 окно уже закрылось", пинг за пять часов до,
+    /// то есть 03:45, а будить надо на две минуты раньше пинга.
+    @Test("Команда считается от якоря минус окно минус две минуты")
     func command() {
-        #expect(WakeSchedule.command(hour: 3, minute: 45)
+        #expect(WakeSchedule.command(anchorHour: 8, anchorMinute: 45)
                 == "sudo pmset repeat wakeorpoweron MTWRFSU 03:43:00")
-        // Через полночь не уезжаем в отрицательное время.
-        #expect(WakeSchedule.command(hour: 0, minute: 1)
-                == "sudo pmset repeat wakeorpoweron MTWRFSU 23:59:00")
-        #expect(WakeSchedule.command(hour: 0, minute: 0)
-                == "sudo pmset repeat wakeorpoweron MTWRFSU 23:58:00")
+        #expect(WakeSchedule.command(anchorHour: 9, anchorMinute: 0)
+                == "sudo pmset repeat wakeorpoweron MTWRFSU 03:58:00")
+        // Через полночь уезжаем на прошлые сутки, а не в отрицательное время.
+        #expect(WakeSchedule.command(anchorHour: 3, anchorMinute: 0)
+                == "sudo pmset repeat wakeorpoweron MTWRFSU 21:58:00")
+        #expect(WakeSchedule.command(anchorHour: 0, anchorMinute: 0)
+                == "sudo pmset repeat wakeorpoweron MTWRFSU 18:58:00")
     }
 
     /// Настоящий вывод pmset -g sched с этой машины.

@@ -97,9 +97,16 @@ public enum Pinger {
 /// `pmset -g sched` рута не требует.
 public enum WakeSchedule {
     /// Команда, которую пользователь вставляет в терминал.
-    /// Будим на две минуты раньше пинга: маку нужно время подняться.
-    public static func command(hour: Int, minute: Int) -> String {
-        let shifted = (hour * 60 + minute - 2 + 1440) % 1440
+    ///
+    /// Считаем от якоря, а не от времени пинга: якорь это час, к которому окно
+    /// должно закончиться, а пинг случается за пять часов до него. Плюс две
+    /// минуты запаса, маку нужно время подняться. Якорь 08:45 даёт 03:43.
+    ///
+    /// Раньше сюда передавали сам якорь, и команда будила мак в 08:43, то есть
+    /// к концу окна вместо его начала. Поэтому вход теперь называется явно.
+    public static func command(anchorHour: Int, anchorMinute: Int) -> String {
+        let minutes = anchorHour * 60 + anchorMinute - Int(Anchor.window / 60) - 2
+        let shifted = ((minutes % 1440) + 1440) % 1440
         return String(format: "sudo pmset repeat wakeorpoweron MTWRFSU %02d:%02d:00",
                       shifted / 60, shifted % 60)
     }
