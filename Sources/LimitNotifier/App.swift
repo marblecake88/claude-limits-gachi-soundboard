@@ -317,13 +317,17 @@ final class AppModel: ObservableObject {
         var id: String { name }
     }
     @Published private(set) var notifyOn = HookInstaller.isInstalled
+    /// События, которые ждут тишины: claude мог отчитаться о конце ответа и
+    /// тут же продолжить, если его разбудила фоновая задача.
+    private var pending: [ReadyEvent] = []
     private var readyTask: Task<Void, Never>?
 
-    /// Раз в две секунды дочитываем, что написал хук. Опрос, а не слежение за
-    /// файлом: события редкие, а FSEvents на перезаписываемый файл капризны.
+    /// Раз в две секунды дочитываем, что написал хук, и разбираем ожидающих.
+    /// Опрос, а не слежение за файлом: события редкие, а FSEvents на
+    /// перезаписываемый файл капризны.
     private func watchReady() {
         readyTask?.cancel()
-        guard notifyOn else { ready = []; return }
+        guard notifyOn else { ready = []; pending = []; return }
         readyTask = Task { [weak self] in
             while !Task.isCancelled {
                 await self?.pickUpReady()
@@ -333,21 +337,58 @@ final class AppModel: ObservableObject {
     }
 
     private func pickUpReady() {
-        let events = ReadyLog.drain()
-        guard !events.isEmpty else { return }
-        for event in events {
-            let name = event.project
-            // Если человек уже смотрит в это окно, звать незачем.
-            if FocusProbe.looksFocused(project: name) {
-                Log.write("готово \(name), но окно в фокусе, не зову")
-                continue
-            }
-            if !ready.contains(name) { ready.append(name) }
-            recent.removeAll { $0.name == name }
-            recent.insert(Finished(name: name, at: event.at), at: 0)
-            if recent.count > 5 { recent.removeLast(recent.count - 5) }
-            Log.write("готово: \(name) · \(FocusProbe.describe())")
+        // Новое событие вытесняет прежнее ожидание по тому же проекту: отсчёт
+        // тишины начинается заново.
+        for event in ReadyLog.drain() {
+            pending.removeAll { $0.project == event.project }
+            pending.append(event)
+            // Работа пошла снова, значит прежний зов больше не актуален.
+            ready.removeAll { $0 == event.project }
         }
+        // Человек вернулся в окно проекта: зов свою работу сделал. Проверяем на
+        // каждом тике, а не только в момент появления, иначе зов висит и крутит
+        // строку, пока по ней не щёлкнут.
+        if !ready.isEmpty {
+            let seen = ready.filter { FocusProbe.looksFocused(project: $0) }
+            if !seen.isEmpty {
+                ready.removeAll { seen.contains($0) }
+                Log.write("зов снят, окно открыто: \(seen.joined(separator: ", "))")
+            }
+        }
+        guard !pending.isEmpty else { return }
+
+        let now = Date()
+        var stillWaiting: [ReadyEvent] = []
+        for event in pending {
+            let changed = event.transcript.isEmpty ? nil : modifiedAt(event.transcript)
+            switch Quiet.verdict(event: event, now: now, transcriptChangedAt: changed) {
+            case .resumed:
+                Log.write("\(event.project): работа продолжилась, не зову")
+            case .waiting:
+                stillWaiting.append(event)
+            case .call:
+                call(event)
+            }
+        }
+        pending = stillWaiting
+    }
+
+    private func call(_ event: ReadyEvent) {
+        let name = event.project
+        // Если человек уже смотрит в это окно, звать незачем.
+        if FocusProbe.looksFocused(project: name) {
+            Log.write("готово \(name), но окно в фокусе, не зову")
+            return
+        }
+        if !ready.contains(name) { ready.append(name) }
+        recent.removeAll { $0.name == name }
+        recent.insert(Finished(name: name, at: event.at), at: 0)
+        if recent.count > 5 { recent.removeLast(recent.count - 5) }
+        Log.write("готово: \(name) · \(FocusProbe.describe())")
+    }
+
+    private func modifiedAt(_ path: String) -> Date? {
+        (try? FileManager.default.attributesOfItem(atPath: path))?[.modificationDate] as? Date
     }
 
     /// Гасим зов: человек открыл панель, значит увидел.
@@ -364,7 +405,7 @@ final class AppModel: ObservableObject {
         }
         notifyOn = HookInstaller.isInstalled
         Log.write("уведомления об окончании \(notifyOn ? "включены" : "выключены")")
-        if !notifyOn { ready = [] }
+        if !notifyOn { ready = []; pending = [] }
         watchReady()
     }
 

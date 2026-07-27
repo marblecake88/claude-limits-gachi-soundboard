@@ -4,11 +4,15 @@ import Foundation
 public struct ReadyEvent: Sendable, Equatable {
     public let cwd: String
     public let sessionId: String
+    /// Транскрипт сессии. По его времени изменения видно, продолжилась ли
+    /// работа после того, как claude отчитался о конце ответа.
+    public let transcript: String
     public let at: Date
 
-    public init(cwd: String, sessionId: String, at: Date) {
+    public init(cwd: String, sessionId: String, transcript: String = "", at: Date) {
         self.cwd = cwd
         self.sessionId = sessionId
+        self.transcript = transcript
         self.at = at
     }
 
@@ -54,8 +58,9 @@ public enum ReadyLog {
                   !isOurProbe(cwd: cwd)
             else { continue }
             let session = json["session_id"] as? String ?? ""
+            let transcript = json["transcript_path"] as? String ?? ""
             let at = (json["at"] as? Double).map { Date(timeIntervalSince1970: $0) } ?? now
-            out.append(ReadyEvent(cwd: cwd, sessionId: session, at: at))
+            out.append(ReadyEvent(cwd: cwd, sessionId: session, transcript: transcript, at: at))
         }
         return out
     }
@@ -219,5 +224,47 @@ public enum HookInstaller {
         try FileManager.default.createDirectory(
             at: settingsURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try data.write(to: settingsURL, options: .atomic)
+    }
+}
+
+
+/// Ожидание тишины перед тем, как звать.
+///
+/// Событие Stop приходит в конце каждого ответа, а не в конце задачи: если
+/// claude разбудила фоновая задача или человек написал что-то посреди работы,
+/// ответ делится на несколько, и Stop приходит несколько раз. Звать на каждый
+/// такой Stop бессмысленно, строка меню начинает дёргаться.
+///
+/// Поэтому ждём тишины: если после события транскрипт сессии снова изменился,
+/// значит работа продолжилась, и звать не о чем.
+public enum Quiet {
+    /// Сколько тишины считаем достаточной.
+    ///
+    /// Восемь секунд, а не полминуты. Задержка нужна только чтобы транскрипт
+    /// успел показать, что работа продолжилась, а это видно почти сразу. Долгое
+    /// ожидание вредно: за него человек успевает вернуться к окну, и проверка
+    /// фокуса решает, что звать не надо, хотя в момент окончания он был не тут.
+    public static let delay: TimeInterval = 8
+
+    public enum Verdict: Sendable, Equatable {
+        /// Работа продолжилась, событие устарело.
+        case resumed
+        /// Тишины пока мало, ждём дальше.
+        case waiting
+        /// Пора звать.
+        case call
+    }
+
+    /// Решение по одному ожидающему событию.
+    /// - transcriptChangedAt: время последней записи в транскрипт, если он есть.
+    public static func verdict(event: ReadyEvent, now: Date,
+                               transcriptChangedAt: Date?,
+                               delay: TimeInterval = delay) -> Verdict {
+        // Секунда запаса: сам Stop тоже попадает в транскрипт, и его запись
+        // почти всегда чуть позже времени события.
+        if let changed = transcriptChangedAt, changed > event.at.addingTimeInterval(1) {
+            return .resumed
+        }
+        return now.timeIntervalSince(event.at) >= delay ? .call : .waiting
     }
 }

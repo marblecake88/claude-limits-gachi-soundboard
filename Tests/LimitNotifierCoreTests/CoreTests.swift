@@ -1437,3 +1437,62 @@ struct HookInstallerTests {
         #expect(s.contains("exit 0"))
     }
 }
+
+// MARK: - Ожидание тишины перед зовом
+
+@Suite("Тишина перед зовом")
+struct QuietTests {
+
+    private let at = utc(2026, 7, 27, 12, 0)
+    private func event(_ transcript: String = "/tmp/t.jsonl") -> ReadyEvent {
+        ReadyEvent(cwd: "/Users/k/PycharmProjects/drpmonitor", sessionId: "s",
+                   transcript: transcript, at: at)
+    }
+
+    /// Главный случай: claude отчитался о конце ответа, но его разбудила
+    /// фоновая задача и он продолжил. Такой Stop звать не должен.
+    @Test("Работа продолжилась: не зовём")
+    func resumed() {
+        let v = Quiet.verdict(event: event(), now: at.addingTimeInterval(30),
+                             transcriptChangedAt: at.addingTimeInterval(10))
+        #expect(v == .resumed)
+    }
+
+    @Test("Тишины мало: ждём дальше")
+    func waiting() {
+        let v = Quiet.verdict(event: event(), now: at.addingTimeInterval(5),
+                             transcriptChangedAt: at)
+        #expect(v == .waiting)
+    }
+
+    @Test("Тишина выдержана: зовём")
+    func call() {
+        let v = Quiet.verdict(event: event(), now: at.addingTimeInterval(Quiet.delay),
+                             transcriptChangedAt: at)
+        #expect(v == .call)
+    }
+
+    /// Сам Stop тоже попадает в транскрипт, и запись оказывается на доли
+    /// секунды позже события. Это не повод считать, что работа продолжилась.
+    @Test("Запись самого Stop не считается продолжением")
+    func ownRecordIgnored() {
+        let v = Quiet.verdict(event: event(), now: at.addingTimeInterval(Quiet.delay),
+                             transcriptChangedAt: at.addingTimeInterval(0.4))
+        #expect(v == .call)
+    }
+
+    @Test("Без транскрипта решаем только по времени")
+    func noTranscript() {
+        #expect(Quiet.verdict(event: event(""), now: at.addingTimeInterval(1),
+                              transcriptChangedAt: nil) == .waiting)
+        #expect(Quiet.verdict(event: event(""), now: at.addingTimeInterval(Quiet.delay + 1),
+                              transcriptChangedAt: nil) == .call)
+    }
+
+    @Test("Транскрипт в событии разбирается")
+    func parsesTranscript() {
+        let text = #"{"cwd":"/tmp/proj","session_id":"a","transcript_path":"/tmp/a.jsonl"}"#
+        let events = ReadyLog.parse(text, now: at)
+        #expect(events.first?.transcript == "/tmp/a.jsonl")
+    }
+}
