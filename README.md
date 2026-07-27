@@ -1,6 +1,6 @@
 # claude limits gachi soundboard
 
-[![release](https://img.shields.io/badge/release-v1.5-ff598c)](https://github.com/marblecake88/claude-limits-gachi-soundboard/releases)
+[![release](https://img.shields.io/badge/release-v1.6-ff598c)](https://github.com/marblecake88/claude-limits-gachi-soundboard/releases)
 [![downloads](https://img.shields.io/github/downloads/marblecake88/claude-limits-gachi-soundboard/total)](https://github.com/marblecake88/claude-limits-gachi-soundboard/releases)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 ![macos](https://img.shields.io/badge/macos-14%2B-black)
@@ -16,7 +16,8 @@
 - саундборд: жмёшь кошку, играет случайный гачи звук. или тыкаешь конкретный на сетке
 - лимиты Claude прямо в строке меню: 5-часовое окно, недельный, сколько до сброса
 - keep-alive: в нужное время стартует клаудекоде окно, чтобы к нужному часу у тебя было 99% лимита и час до закрытия окна.
-  работаешь с 8, ставишь 9
+  работаешь с 8, ставишь 9. если мак спит ночью, приложение показывает команду для pmset,
+  которую надо один раз вставить в терминал: прав приложение не просит
 - трата в долларах по тарифам API, считается локально из транскриптов
 - статистика: жмёшь STATS в панели лимитов, окно разъезжается вправо. токены по дням,
   активность, модели, стрики. периоды сегодня/неделя/месяц/всё
@@ -100,7 +101,8 @@ Claude overnight so by the time you wake up you have 99% of the 5-hour limit and
 - soundboard: click the cat for a random gachi, or tap a specific one on the grid
 - Claude limits right in the menu bar: 5-hour window, weekly, time to reset
 - keep-alive: starts a claude-code window at the set time, so by your hour you have 99% of the limit
-  and an hour before it closes. you start at 8, set it to 9
+  and an hour before it closes. you start at 8, set it to 9. if your mac sleeps at night, the app
+  shows a pmset command to paste in a terminal once: the app never asks for privileges
 - spend in dollars at API rates, computed locally from transcripts
 - statistics: hit STATS on the limits panel and the window expands to the right — tokens per day,
   activity, models, streaks. today / week / month / all time. per-day numbers exclude cache

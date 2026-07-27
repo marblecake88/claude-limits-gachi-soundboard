@@ -165,6 +165,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var nextPingText = L.s("выключено", "off")
     /// Версия из последнего релиза, если она новее нашей. Иначе nil.
     @Published private(set) var updateVersion: String?
+    /// Во сколько мак разбудит сам себя, если это настроено. Читаем из pmset.
+    @Published private(set) var wakeAt: String?
+
 
     /// Какой экран показан. По умолчанию борд, но если пользователь хоть раз
     /// заходил в лимиты, панель открывается сразу на них.
@@ -173,6 +176,7 @@ final class AppModel: ObservableObject {
     /// Вызывается при каждом открытии панели: выбирает стартовый экран.
     func prepareForOpen() {
         screen = settings.visitedLimits ? .limits : .board
+        refreshWakeState()
     }
 
     func showLimits() {
@@ -289,6 +293,7 @@ final class AppModel: ObservableObject {
         startPolling()
         rescheduleKeepAlive()
         rescanSpend(force: true)
+        refreshWakeState()
 
         tickTask = Task { [weak self] in
             while !Task.isCancelled {
@@ -423,56 +428,66 @@ final class AppModel: ObservableObject {
     func setKeepAlive(_ on: Bool) {
         settings.keepAliveEnabled = on
         Log.write("keep-alive \(on ? "on" : "off")")
-        if !on { setWakeMac(false) }
         rescheduleKeepAlive()
     }
 
-    func setWakeMac(_ on: Bool) {
-        let ping = Anchor.nextPing(anchorHour: settings.anchorHour,
-                                   anchorMinute: settings.anchorMinute,
-                                   from: Date())
-        // Пароль спрашиваем только когда состояние реально меняется.
-        // Раньше выключение keep-alive безусловно звало pmset, даже если
-        // будильник и так не стоял, и это дёргало пароль на каждый клик.
-        let spec = on ? "\(settings.anchorHour):\(settings.anchorMinute)" : ""
-        guard on != settings.wakeMacEnabled || (on && spec != lastWakeSpec) else {
-            rescheduleKeepAlive()
-            return
+    /// Окно с объяснением, зачем нужен будильник и что для него сделать.
+    ///
+    /// Прав приложение не просит вообще: pmset требует рута, а запрос пароля
+    /// из приложения macOS считает поведением малвари и однажды за это снесла
+    /// приложение из /Applications. Поэтому команду выполняет человек.
+    func showWakeHelp() {
+        let cmd = WakeSchedule.command(hour: settings.anchorHour, minute: settings.anchorMinute)
+        let alert = NSAlert()
+        alert.messageText = L.s("Разбудить мак к ночному пингу",
+                                "Wake the mac for the nightly ping")
+        alert.informativeText = L.s(
+            """
+            Если мак спит, keep-alive не сработает: будить claude некому.             Штатный способ разбудить мак по расписанию это pmset, и ему нужны права root.
+
+            Приложение их не просит специально. Запрос пароля из приложения macOS             считает поведением вредоносного ПО, и однажды система за это удалила             приложение, хотя подпись и нотаризация были в порядке.
+
+            Поэтому вставьте команду в терминал сами, один раз:
+
+            \(cmd)
+
+            Проверить: pmset -g sched
+            Отменить: \(WakeSchedule.cancelCommand)
+
+            Слот повтора в системе один, так что своё расписание, если оно было,             команда заменит.
+            """,
+            """
+            If the mac is asleep, keep-alive can't run: there is nobody to wake claude.             The standard way to wake a mac on schedule is pmset, and it needs root.
+
+            The app deliberately never asks for it. A password prompt coming from an app             is what macOS treats as malware behaviour, and it once deleted this app over             exactly that, signature and notarization notwithstanding.
+
+            So paste the command in a terminal yourself, once:
+
+            \(cmd)
+
+            Check with: pmset -g sched
+            Cancel with: \(WakeSchedule.cancelCommand)
+
+            The system has a single repeat slot, so this replaces your own schedule if you had one.
+            """)
+        alert.addButton(withTitle: L.s("Скопировать команду", "Copy command"))
+        alert.addButton(withTitle: L.s("Закрыть", "Close"))
+
+        NSApp.activate(ignoringOtherApps: true)
+        let answer = alert.runModal()
+        if answer == .alertFirstButtonReturn {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(cmd, forType: .string)
+            Log.write("wake command скопирована: \(cmd)")
         }
-        lastWakeSpec = on ? spec : ""
+        refreshWakeState()
+    }
 
-        // pmset требует прав, поэтому спрашиваем пароль через osascript.
-        // Слот repeat в системе один на всех, об этом написано в панели.
-        let cal = Calendar.current
-        let h = cal.component(.hour, from: ping)
-        let m = cal.component(.minute, from: ping)
-        // Будим на две минуты раньше: маку нужно время подняться.
-        let wakeAt = String(format: "%02d:%02d:00", (h * 60 + m - 2 + 1440) / 60 % 24,
-                            (h * 60 + m - 2 + 1440) % 60)
-        let cmd = on
-            ? "pmset repeat wakeorpoweron MTWRFSU \(wakeAt)"
-            : "pmset repeat cancel"
-
-        Task.detached {
-            let script = "do shell script \"\(cmd)\" with administrator privileges"
-            let p = Process()
-            p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-            p.arguments = ["-e", script]
-            do {
-                try p.run()
-                p.waitUntilExit()
-                let ok = p.terminationStatus == 0
-                await MainActor.run {
-                    self.settings.wakeMacEnabled = on && ok
-                    Log.write("pmset \(on ? "set \(wakeAt)" : "cancelled"): \(ok ? "ok" : "отказ")")
-                    self.rescheduleKeepAlive()
-                }
-            } catch {
-                await MainActor.run {
-                    self.settings.wakeMacEnabled = false
-                    Log.write("pmset failed: \(error.localizedDescription)")
-                }
-            }
+    /// Читает, стоит ли будильник. Без прав, поэтому можно дёргать свободно.
+    func refreshWakeState() {
+        Task.detached(priority: .utility) {
+            let at = WakeSchedule.current()
+            await MainActor.run { [weak self] in self?.wakeAt = at }
         }
     }
 

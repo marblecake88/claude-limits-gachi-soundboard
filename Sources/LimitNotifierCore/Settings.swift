@@ -10,7 +10,6 @@ public final class Settings: ObservableObject {
             Keys.anchorHour: 9,
             Keys.anchorMinute: 0,
             Keys.keepAlive: false,
-            Keys.wakeMac: false,
         ])
     }
 
@@ -18,7 +17,6 @@ public final class Settings: ObservableObject {
         static let anchorHour = "anchorHour"
         static let anchorMinute = "anchorMinute"
         static let keepAlive = "keepAliveEnabled"
-        static let wakeMac = "wakeMacEnabled"
         static let visitedLimits = "visitedLimits"
         static let language = "language"
     }
@@ -69,11 +67,6 @@ public final class Settings: ObservableObject {
     public var visitedLimits: Bool {
         get { defaults.bool(forKey: Keys.visitedLimits) }
         set { defaults.set(newValue, forKey: Keys.visitedLimits); bump() }
-    }
-
-    public var wakeMacEnabled: Bool {
-        get { defaults.bool(forKey: Keys.wakeMac) }
-        set { defaults.set(newValue, forKey: Keys.wakeMac); bump() }
     }
 
     public var anchorText: String {

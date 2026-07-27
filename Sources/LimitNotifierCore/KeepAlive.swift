@@ -79,3 +79,68 @@ public enum Pinger {
     }
 
 }
+
+// MARK: - Будильник мака
+
+/// Пробуждение мака к пингу настраивается через `pmset repeat`, а он требует
+/// рута.
+///
+/// Раньше приложение звало `osascript` с `do shell script ... with
+/// administrator privileges`: всплывал системный запрос пароля, и команда
+/// выполнялась от рута. Ровно так работает почти вся macOS-малварь, крадущая
+/// пароли, поэтому поведенческий XProtect в Sequoia на это и срабатывает: у
+/// одного пользователя система показала попап про вредоносное ПО и снесла
+/// приложение из /Applications, хотя подпись и нотаризация были в порядке.
+///
+/// Поэтому прав больше не просим совсем. Приложение показывает готовую команду,
+/// человек выполняет её в терминале сам, а мы только читаем состояние: чтение
+/// `pmset -g sched` рута не требует.
+public enum WakeSchedule {
+    /// Команда, которую пользователь вставляет в терминал.
+    /// Будим на две минуты раньше пинга: маку нужно время подняться.
+    public static func command(hour: Int, minute: Int) -> String {
+        let shifted = (hour * 60 + minute - 2 + 1440) % 1440
+        return String(format: "sudo pmset repeat wakeorpoweron MTWRFSU %02d:%02d:00",
+                      shifted / 60, shifted % 60)
+    }
+
+    public static let cancelCommand = "sudo pmset repeat cancel"
+
+    /// Разбирает `pmset -g sched`. Возвращает время повторяющегося пробуждения
+    /// в виде "03:43:00", если оно настроено.
+    ///
+    /// Вывод выглядит так:
+    ///     Repeating power events:
+    ///       wakepoweron at 3:43AM every day
+    public static func scheduled(in output: String) -> String? {
+        for raw in output.split(separator: "\n") {
+            let line = raw.trimmingCharacters(in: .whitespaces).lowercased()
+            guard line.contains("wakepoweron") || line.contains("wakeorpoweron") else { continue }
+            guard let at = line.range(of: #"\d{1,2}:\d{2}(:\d{2})?\s*(am|pm)?"#,
+                                      options: .regularExpression) else { continue }
+            return normalize(String(line[at]))
+        }
+        return nil
+    }
+
+    /// "3:43am" -> "03:43", "15:43:00" -> "15:43".
+    static func normalize(_ text: String) -> String {
+        let t = text.replacingOccurrences(of: " ", with: "")
+        let pm = t.hasSuffix("pm"), am = t.hasSuffix("am")
+        let digits = t.replacingOccurrences(of: "am", with: "").replacingOccurrences(of: "pm", with: "")
+        let parts = digits.split(separator: ":").compactMap { Int($0) }
+        guard parts.count >= 2 else { return text }
+        var hour = parts[0]
+        if pm, hour < 12 { hour += 12 }
+        if am, hour == 12 { hour = 0 }
+        return String(format: "%02d:%02d", hour % 24, parts[1])
+    }
+
+    /// Читает текущее расписание. Без рута, поэтому дёргать безопасно.
+    public static func current(timeout: TimeInterval = 10) -> String? {
+        guard case .finished(let status, let out, _) =
+                Proc.run("/usr/bin/pmset", ["-g", "sched"], timeout: timeout), status == 0
+        else { return nil }
+        return scheduled(in: out)
+    }
+}

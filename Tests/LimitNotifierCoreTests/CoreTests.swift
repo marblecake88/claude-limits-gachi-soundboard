@@ -1140,3 +1140,39 @@ struct LifetimeTokensTests {
         #expect(Fmt.tokens(42) == "42")
     }
 }
+
+// MARK: - Будильник мака
+
+@Suite("Расписание пробуждения")
+struct WakeScheduleTests {
+
+    /// Будим на две минуты раньше пинга: маку нужно время подняться.
+    @Test("Команда со сдвигом на две минуты назад")
+    func command() {
+        #expect(WakeSchedule.command(hour: 3, minute: 45)
+                == "sudo pmset repeat wakeorpoweron MTWRFSU 03:43:00")
+        // Через полночь не уезжаем в отрицательное время.
+        #expect(WakeSchedule.command(hour: 0, minute: 1)
+                == "sudo pmset repeat wakeorpoweron MTWRFSU 23:59:00")
+        #expect(WakeSchedule.command(hour: 0, minute: 0)
+                == "sudo pmset repeat wakeorpoweron MTWRFSU 23:58:00")
+    }
+
+    /// Настоящий вывод pmset -g sched с этой машины.
+    @Test("Разбор pmset -g sched")
+    func parse() {
+        let real = """
+        Repeating power events:
+          wakepoweron at 3:28AM every day
+        Scheduled power events:
+         [0]  wake at 07/24/2026 12:41:36 by 'com.apple.alarm.user-invisible'
+        """
+        #expect(WakeSchedule.scheduled(in: real) == "03:28")
+        #expect(WakeSchedule.scheduled(in: "wakepoweron at 3:43PM every day") == "15:43")
+        #expect(WakeSchedule.scheduled(in: "wakepoweron at 12:05AM every day") == "00:05")
+        #expect(WakeSchedule.scheduled(in: "wakepoweron at 12:05PM every day") == "12:05")
+        // Расписания нет: только разовые события или пусто.
+        #expect(WakeSchedule.scheduled(in: "Scheduled power events:\n [0]  wake at 07/24") == nil)
+        #expect(WakeSchedule.scheduled(in: "") == nil)
+    }
+}

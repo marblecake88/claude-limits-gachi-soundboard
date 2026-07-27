@@ -187,8 +187,9 @@ struct PanelView: View {
             SettingsBlock(
                 settings: model.settings,
                 nextPingText: model.nextPingText,
+                wakeAt: model.wakeAt,
                 onKeepAlive: { model.setKeepAlive($0) },
-                onWakeMac: { model.setWakeMac($0) },
+                onWakeHelp: { model.showWakeHelp() },
                 onAnchor: { model.setAnchor(hour: $0, minute: $1) }
             )
 
@@ -476,8 +477,9 @@ private struct SettingsBlock: View {
     // Квалифицируем модуль: в SwiftUI есть свой Settings, имя иначе неоднозначно.
     @ObservedObject var settings: LimitNotifierCore.Settings
     let nextPingText: String
+    let wakeAt: String?
     let onKeepAlive: (Bool) -> Void
-    let onWakeMac: (Bool) -> Void
+    let onWakeHelp: () -> Void
     let onAnchor: (Int, Int) -> Void
 
 
@@ -506,13 +508,35 @@ private struct SettingsBlock: View {
             RowShell {
                 RowKey("WAKE MAC", muted: !settings.keepAliveEnabled)
                 Spacer(minLength: 8)
-                Switch(isOn: Binding(get: { settings.wakeMacEnabled }, set: onWakeMac))
+                if let at = wakeAt {
+                    Text(at)
+                        .font(Metrics.font).monospacedDigit()
+                        .foregroundStyle(Palette.accent)
+                } else {
+                    Text(L.s("не стоит", "not set"))
+                        .font(Metrics.font).foregroundStyle(Palette.faint)
+                }
             }
-            // Будилка без keep-alive бессмысленна: будить некого.
+            .opacity(settings.keepAliveEnabled ? 1 : 0.45)
+
+            // Подробности и команда в отдельном окне: в строке панели такое
+            // объяснение не поместится, а без него команда выглядит подозрительно.
+            Button(action: onWakeHelp) {
+                Text(L.s("КАК НАСТРОИТЬ", "HOW TO SET UP"))
+                    .font(.system(size: 10, design: .monospaced))
+                    .tracking(Metrics.trackFoot)
+                    .foregroundStyle(Palette.dim)
+                    .padding(.horizontal, 8).padding(.vertical, 3)
+                    .overlay(RoundedRectangle(cornerRadius: 7)
+                        .stroke(Palette.line, lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+            .padding(.top, 5)
             .disabled(!settings.keepAliveEnabled)
             .opacity(settings.keepAliveEnabled ? 1 : 0.45)
-            Note(L.s("Нужна, если закрываете мак на ночь",
-                     "Needed if your mac sleeps at night: it will wake it for the ping"))
+
+            Note(L.s("Нужна, если закрываете мак на ночь. Вставьте команду в терминал один раз",
+                     "Needed if your mac sleeps at night. Paste the command in a terminal once"))
         }
     }
 
