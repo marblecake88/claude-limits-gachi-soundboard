@@ -320,6 +320,9 @@ final class AppModel: ObservableObject {
     /// События, которые ждут тишины: claude мог отчитаться о конце ответа и
     /// тут же продолжить, если его разбудила фоновая задача.
     private var pending: [ReadyEvent] = []
+    /// Транскрипт и время каждого уже прозвучавшего зова: если сессия снова
+    /// ожила, зов пора снимать, даже если нового Stop не было.
+    private var called: [String: (transcript: String, at: Date)] = [:]
     private var readyTask: Task<Void, Never>?
 
     /// Раз в две секунды дочитываем, что написал хук, и разбираем ожидающих.
@@ -352,7 +355,20 @@ final class AppModel: ObservableObject {
             let seen = ready.filter { FocusProbe.looksFocused(project: $0) }
             if !seen.isEmpty {
                 ready.removeAll { seen.contains($0) }
+                seen.forEach { called.removeValue(forKey: $0) }
                 Log.write("зов снят, окно открыто: \(seen.joined(separator: ", "))")
+            }
+            // Работа возобновилась: claude закрыл ответ, ждал не человека, а
+            // фоновую задачу, и снова взялся за дело. Звать больше не о чем.
+            let alive = ready.filter { name in
+                guard let mark = called[name], !mark.transcript.isEmpty,
+                      let changed = modifiedAt(mark.transcript) else { return false }
+                return changed > mark.at.addingTimeInterval(1)
+            }
+            if !alive.isEmpty {
+                ready.removeAll { alive.contains($0) }
+                alive.forEach { called.removeValue(forKey: $0) }
+                Log.write("зов снят, работа продолжилась: \(alive.joined(separator: ", "))")
             }
         }
         guard !pending.isEmpty else { return }
@@ -381,6 +397,7 @@ final class AppModel: ObservableObject {
             return
         }
         if !ready.contains(name) { ready.append(name) }
+        called[name] = (transcript: event.transcript, at: Date())
         recent.removeAll { $0.name == name }
         recent.insert(Finished(name: name, at: event.at), at: 0)
         if recent.count > 5 { recent.removeLast(recent.count - 5) }
@@ -395,6 +412,7 @@ final class AppModel: ObservableObject {
     func clearReady() {
         guard !ready.isEmpty else { return }
         ready = []
+        called = [:]
     }
 
     func setNotify(_ on: Bool) {
