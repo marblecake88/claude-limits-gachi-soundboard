@@ -960,6 +960,60 @@ struct PopoverFitTests {
     }
 }
 
+// MARK: - Вытеснение из строки меню
+
+@Suite("Вытеснение из строки меню")
+struct SqueezeWatchTests {
+
+    @Test("Пока рисуют, плашка не нужна")
+    func drawnStaysQuiet() {
+        var watch = SqueezeWatch()
+        #expect(watch.update(drawn: true) == false)
+        #expect(watch.update(drawn: true) == false)
+    }
+
+    /// Один промах ничего не значит: опрос мог попасть в момент, когда строка
+    /// меню ещё перекладывается после смены активного приложения.
+    @Test("Одного промаха недостаточно")
+    func singleMissIgnored() {
+        var watch = SqueezeWatch()
+        #expect(watch.update(drawn: false) == false)
+    }
+
+    @Test("Два промаха подряд это вытеснение")
+    func twoMissesTrigger() {
+        var watch = SqueezeWatch()
+        #expect(watch.update(drawn: false) == false)
+        #expect(watch.update(drawn: false) == true)
+    }
+
+    @Test("Удача сбрасывает счётчик")
+    func drawnResets() {
+        var watch = SqueezeWatch()
+        #expect(watch.update(drawn: false) == false)
+        #expect(watch.update(drawn: true) == false)
+        // Счёт начинается заново, значит одного промаха снова мало.
+        #expect(watch.update(drawn: false) == false)
+        #expect(watch.update(drawn: false) == true)
+    }
+
+    @Test("Порог настраивается")
+    func customThreshold() {
+        var watch = SqueezeWatch(needed: 1)
+        #expect(watch.update(drawn: false) == true)
+    }
+
+    /// Вытеснение не разовое событие, а состояние: пока места нет, плашка висит.
+    @Test("Пока места нет, состояние держится")
+    func staysSqueezed() {
+        var watch = SqueezeWatch()
+        _ = watch.update(drawn: false)
+        #expect(watch.update(drawn: false) == true)
+        #expect(watch.update(drawn: false) == true)
+        #expect(watch.update(drawn: true) == false)
+    }
+}
+
 // MARK: - Кэш статистики claude
 
 @Suite("Чтение stats-cache.json")

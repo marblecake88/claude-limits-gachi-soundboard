@@ -19,6 +19,9 @@ public final class Settings: ObservableObject {
         static let keepAlive = "keepAliveEnabled"
         static let visitedLimits = "visitedLimits"
         static let language = "language"
+        static let plaqueAlways = "plaqueAlways"
+        static let plaqueX = "plaqueX"
+        static let plaqueY = "plaqueY"
     }
 
     @Published public var version = 0
@@ -67,6 +70,35 @@ public final class Settings: ObservableObject {
     public var visitedLimits: Bool {
         get { defaults.bool(forKey: Keys.visitedLimits) }
         set { defaults.set(newValue, forKey: Keys.visitedLimits); bump() }
+    }
+
+    /// Держать плавающую плашку всегда. Выключено значит "только когда нас
+    /// вытеснили из строки меню": тогда она появляется сама и сама уходит.
+    public var plaqueAlways: Bool {
+        get { defaults.bool(forKey: Keys.plaqueAlways) }
+        set { defaults.set(newValue, forKey: Keys.plaqueAlways); bump() }
+    }
+
+    /// Куда её перетащили. nil, пока не двигали: тогда встаёт в правый верхний
+    /// угол под строкой меню.
+    ///
+    /// bump тут не зовём: позиция это не состояние интерфейса панели, а
+    /// перерисовывать её на каждый пиксель перетаскивания незачем.
+    public var plaqueOrigin: CGPoint? {
+        get {
+            guard let x = defaults.object(forKey: Keys.plaqueX) as? Double,
+                  let y = defaults.object(forKey: Keys.plaqueY) as? Double else { return nil }
+            return CGPoint(x: x, y: y)
+        }
+        set {
+            guard let newValue else {
+                defaults.removeObject(forKey: Keys.plaqueX)
+                defaults.removeObject(forKey: Keys.plaqueY)
+                return
+            }
+            defaults.set(newValue.x, forKey: Keys.plaqueX)
+            defaults.set(newValue.y, forKey: Keys.plaqueY)
+        }
     }
 
     public var anchorText: String {

@@ -299,3 +299,29 @@ public enum PopoverFit {
         return min(max(x, screenMinX + margin), maxX)
     }
 }
+
+// MARK: - Вытеснение из строки меню
+
+/// Считает промахи подряд, прежде чем признать элемент вытесненным.
+///
+/// Место в строке меню раздаёт система, и приложениям с длинным меню (JetBrains,
+/// Xcode) её хватает целиком: наш элемент просто перестают рисовать. Проверять
+/// это приходится опросом, а опрос попадает и в момент, когда строка ещё
+/// перекладывается после смены активного приложения. Один промах там ничего не
+/// значит, поэтому ждём подряд идущих.
+public struct SqueezeWatch: Sendable {
+    public let needed: Int
+    private var misses = 0
+
+    public init(needed: Int = 2) {
+        precondition(needed > 0)
+        self.needed = needed
+    }
+
+    /// Отдаёт true, когда элемент пора считать вытесненным. Одна удача сбрасывает
+    /// счётчик: вернулось место, значит и плашка больше не нужна.
+    public mutating func update(drawn: Bool) -> Bool {
+        misses = drawn ? 0 : misses + 1
+        return misses >= needed
+    }
+}

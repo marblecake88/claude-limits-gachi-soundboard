@@ -23,6 +23,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var popover: NSPopover?
     private var observer: AnyCancellable?
 
+    /// Плавающая плашка и слежка за тем, не выкинули ли нас из строки меню.
+    private var plaque: Plaque?
+    private var squeeze = SqueezeWatch()
+    /// Момент запуска: первые секунды строка меню ещё раскладывается, и судить
+    /// по ней нельзя.
+    private let startedAt = Date()
+    /// От чего сейчас открыт попап: от элемента строки меню или от плашки.
+    private weak var anchor: NSView?
+
     private let marquee = Marquee()          // 90 точек в секунду, разгон 0.7 с, два проезда
     private var marqueeTimer: Timer?
     private var marqueeTape: NSAttributedString?
@@ -30,6 +39,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var marqueePeriod: Double = 0
     private var runStart: Date?
     private var holdUntil = Date.distantFuture
+    /// Последнее нарисованное смещение: по нему плашка догоняет ленту, когда
+    /// появляется посреди прогона.
+    private var lastOffset: Double = 0
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -43,12 +55,80 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         popover = pop
         watchPopoverResize()
 
+        plaque = Plaque(settings: model.settings) { [weak self] in
+            guard let self else { return }
+            self.showPanel(from: self.plaque?.anchor)
+        }
+        watchAppSwitch()
+
         observer = model.objectWillChange.sink { [weak self] _ in
             // objectWillChange приходит до записи значения, поэтому
             // перерисовываем на следующем витке цикла.
             DispatchQueue.main.async { self?.redraw() }
         }
         redraw()
+        // Первую проверку делаем после выдержки: элемент только что создан, и
+        // системе нужно время, чтобы его разложить и нарисовать.
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.settleDelay + 0.3) { [weak self] in
+            MainActor.assumeIsolated { self?.checkSqueeze() }
+        }
+    }
+
+    // MARK: - Плавающая плашка
+
+    /// Сколько после запуска не верим тому, что строка меню про нас говорит.
+    private static let settleDelay: TimeInterval = 3
+
+    /// Строка меню перекладывается на смене активного приложения: у нового меню
+    /// может быть длиннее, и наш элемент выкинут. Ждём, пока система закончит
+    /// раскладку, и только потом смотрим, рисуют ли нас.
+    private func watchAppSwitch() {
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.checkSoon() }
+        }
+    }
+
+    /// Короткая серия проверок вместо одной.
+    ///
+    /// Одна не годится ни рано, ни поздно: слишком рано, и строка меню ещё
+    /// перекладывается, слишком поздно, и плашка выезжает через секунды после
+    /// переключения. А раз для решения нужны два промаха подряд, одиночная
+    /// проверка всё равно ждала бы следующей перерисовки, то есть до минуты.
+    private func checkSoon() {
+        for delay in [0.2, 0.45, 0.75] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                MainActor.assumeIsolated { self?.checkSqueeze() }
+            }
+        }
+    }
+
+    /// Показывать плашку или убрать. Опрос стоит около миллисекунды, поэтому
+    /// зовём и на смене приложения, и на обычной перерисовке.
+    private func checkSqueeze() {
+        guard let plaque else { return }
+        // Пока у элемента нет окна, судить не о чем: сразу после создания система
+        // ещё не успела его разложить, и промах тут ничего не значит.
+        guard let number = statusItem?.button?.window?.windowNumber else { return }
+        // Окно появляется раньше, чем система его рисует, поэтому вдобавок к
+        // проверке окна ждём пару секунд: иначе на запуске плашка успевает
+        // мигнуть и сразу спрятаться.
+        guard Date().timeIntervalSince(startedAt) > Self.settleDelay else { return }
+        let squeezed = squeeze.update(drawn: MenuBar.isDrawn(number))
+        let wanted = model.settings.plaqueAlways || squeezed
+        guard wanted != plaque.isVisible else { return }
+        if wanted {
+            plaque.show()
+            drawTape(offset: lastOffset)   // сразу с актуальной лентой, а не пустой пилюлей
+            Log.write("плашка показана: " + (squeezed ? "вытеснены из строки меню" : "включена в настройках"))
+        } else {
+            // Пока от плашки открыта панель, не убираем: попап останется висеть
+            // без опоры.
+            if popover?.isShown == true, anchor === plaque.anchor { return }
+            plaque.hide()
+            Log.write("плашка убрана: место в строке меню вернулось")
+        }
     }
 
     /// Не даём развёрнутой панели уехать за правый край экрана.
@@ -77,15 +157,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// куда её отодвинули ради широкой.
     private func fitOnScreen() {
         guard let popover, popover.isShown,
-              let button = statusItem?.button, let anchorWindow = button.window,
+              let view = anchor ?? statusItem?.button, let anchorWindow = view.window,
               let window = popover.contentViewController?.view.window,
               let screen = window.screen ?? NSScreen.main else { return }
 
-        let anchor = anchorWindow.convertToScreen(button.convert(button.bounds, to: nil))
+        let spot = anchorWindow.convertToScreen(view.convert(view.bounds, to: nil))
         let visible = screen.visibleFrame
         var frame = window.frame
-        // Как ставит сам попап: по центру иконки. Дальше зажимаем в экран.
-        let wanted = PopoverFit.fittedX(x: anchor.midX - frame.width / 2, width: frame.width,
+        // Как ставит сам попап: по центру опоры. Дальше зажимаем в экран.
+        let wanted = PopoverFit.fittedX(x: spot.midX - frame.width / 2, width: frame.width,
                                         screenMinX: visible.minX, screenMaxX: visible.maxX)
         guard abs(wanted - frame.origin.x) > 0.5 else { return }
         frame.origin.x = wanted
@@ -94,7 +174,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Строка вида 55/78/2h15/4d, каждое число своим цветом.
     private func redraw() {
-        guard let button = statusItem?.button else { return }
+        guard statusItem?.button != nil else { return }
+        // Заодно сверяем, на месте ли мы в строке меню: перерисовка приходит
+        // несколько раз в минуту, а проверка стоит около миллисекунды.
+        defer { checkSqueeze() }
         let limits = limitsLine()
 
         guard !model.ready.isEmpty else {
@@ -212,6 +295,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// темы и на тёмном меню-баре смотрятся грязно.
     private func drawTape(offset: Double) {
         guard let tape = marqueeTape, let button = statusItem?.button else { return }
+        lastOffset = offset
+        // Плашка получает тот же текст и то же смещение: одно движение на два
+        // места, поэтому они не могут разъехаться.
+        if let plaque, plaque.isVisible {
+            plaque.render(line: tape, width: marqueeWindow, offset: offset)
+        }
         // Высота как у строки меню: если картинка ниже, кнопка её центрирует
         // сама и текст уезжает относительно соседних иконок.
         let height = NSStatusBar.system.thickness
@@ -271,16 +360,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func togglePanel() {
-        guard let button = statusItem?.button, let popover else { return }
+        showPanel(from: statusItem?.button)
+    }
+
+    /// Панель одна и та же, меняется только опора: элемент строки меню или плашка.
+    private func showPanel(from view: NSView?) {
+        guard let view, let popover else { return }
         if popover.isShown {
             popover.performClose(nil)
-        } else {
-            model.prepareForOpen()
-            model.refresh()
-            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .maxY)
-            popover.contentViewController?.view.window?.makeKey()
-            fitOnScreen()
+            return
         }
+        anchor = view
+        model.prepareForOpen()
+        model.refresh()
+        popover.show(relativeTo: view.bounds, of: view, preferredEdge: .maxY)
+        popover.contentViewController?.view.window?.makeKey()
+        fitOnScreen()
     }
 }
 
@@ -579,6 +674,7 @@ final class AppModel: ObservableObject {
         // Язык применяем до первой отрисовки: иначе панель успеет собраться
         // на системном, а сохранённый выбор подхватится только со второго раза.
         if let saved = settings.language { L.lang = saved }
+        plaqueAlways = settings.plaqueAlways
         Log.trim()
         // Пишем сразу всё, что понадобится при разборе чужого лога: версию,
         // билд и состояние того, что включается руками.
@@ -791,6 +887,19 @@ final class AppModel: ObservableObject {
         settings.keepAliveEnabled = on
         Log.write("keep-alive \(on ? "on" : "off")")
         rescheduleKeepAlive()
+    }
+
+    /// Держать плашку всегда. Выключено не значит "никогда": при вытеснении из
+    /// строки меню она всё равно появится, иначе цифр не останется вообще.
+    ///
+    /// Отдельным полем, а не чтением настроек напрямую: делегат перерисовывает
+    /// строку по изменениям модели, и переключатель должен доходить до него сразу.
+    @Published private(set) var plaqueAlways = false
+
+    func setPlaqueAlways(_ on: Bool) {
+        settings.plaqueAlways = on
+        plaqueAlways = on
+        Log.write("плашка всегда \(on ? "вкл" : "выкл")")
     }
 
     /// Окно с объяснением, зачем нужен будильник и что для него сделать.

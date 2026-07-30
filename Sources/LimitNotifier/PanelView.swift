@@ -208,6 +208,7 @@ struct PanelView: View {
 
             Sep()
 
+            plaqueRow()
             loginRow()
             languageRow()
 
@@ -320,6 +321,28 @@ struct PanelView: View {
                              onOpen: { model.openProject(item) },
                              onDismiss: { model.dismiss(item.name) })
                 }
+            }
+        }
+    }
+
+    // MARK: Плавающая плашка
+
+    /// Место в строке меню раздаёт система, и приложениям с длинным меню её не
+    /// хватает: наш элемент выкидывают. Плашка появится сама, когда это
+    /// случится, а тумблером её можно держать постоянно.
+    private func plaqueRow() -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            RowShell {
+                RowKey(L.s("Плашка всегда", "Floating plaque"))
+                Spacer(minLength: 8)
+                Switch(isOn: Binding(
+                    get: { model.plaqueAlways },
+                    set: { model.setPlaqueAlways($0) }
+                ))
+            }
+            if !model.plaqueAlways {
+                Note(L.s("Появится сама, если нас вытеснят из строки меню или окно развернут на весь экран",
+                         "Shows up on its own if we get squeezed out of the menu bar, or a window goes fullscreen"))
             }
         }
     }
