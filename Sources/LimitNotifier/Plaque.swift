@@ -88,22 +88,53 @@ final class Plaque {
     }
 }
 
-/// Рисует ли система наше окно в строке меню.
+/// Что система сейчас рисует в строке меню.
 ///
 /// Единственный честный способ это узнать: спросить у системы список окон,
 /// которые реально на экране. Координаты самого элемента не годятся, AppKit
 /// раскладывает их как будто места бесконечно и уводит вытесненные в минус, а
 /// occlusionState у элементов строки меню врёт даже про видимые. Разрешений
-/// запрос не требует: имена и рамки окон отдаются без записи экрана.
+/// запрос не требует: рамки и владельцы окон отдаются без записи экрана.
 ///
 /// То, что список отражает именно нарисованное, документацией не обещано.
 /// Проверено опытом на Sequoia; если отвалится, останется ручной режим
 /// "плашка всегда".
 enum MenuBar {
-    static func isDrawn(_ number: Int) -> Bool {
+    struct State {
+        /// Наш элемент нарисован.
+        let ours: Bool
+        /// Строку меню видно вообще: рисуют хоть чьи-то иконки.
+        let showing: Bool
+    }
+
+    /// Оба ответа за один опрос: список окон стоит около миллисекунды, и просить
+    /// его дважды подряд незачем.
+    static func state(ours number: Int) -> State {
+        let mine = Int(ProcessInfo.processInfo.processIdentifier)
+        // Иконки строки меню живут в правой половине экрана. Проверка нужна,
+        // потому что полноэкранное окно тоже держит у верхней кромки полосу
+        // своего слоя, но во всю ширину и от нуля.
+        let midX = NSScreen.main?.frame.midX ?? 0
         let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID)
             as? [[String: Any]] ?? []
-        return list.contains { ($0[kCGWindowNumber as String] as? Int) == number }
+
+        var ours = false
+        var foreign = false
+        for window in list {
+            if (window[kCGWindowNumber as String] as? Int) == number { ours = true; continue }
+            guard !foreign else { continue }
+            // Чужие: своя же плашка стоит там же, наверху справа, и без этой
+            // проверки строка меню всегда выглядела бы видимой.
+            guard let pid = window[kCGWindowOwnerPID as String] as? Int, pid != mine,
+                  let layer = window[kCGWindowLayer as String] as? Int, layer >= 25,
+                  let bounds = window[kCGWindowBounds as String] as? [String: Any],
+                  let y = bounds["Y"] as? Double, y < 40,
+                  let height = bounds["Height"] as? Double, height < 40,
+                  let x = bounds["X"] as? Double, x >= midX
+            else { continue }
+            foreign = true
+        }
+        return State(ours: ours, showing: foreign)
     }
 }
 

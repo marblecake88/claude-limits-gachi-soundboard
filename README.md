@@ -1,6 +1,6 @@
 # claude limits gachi soundboard
 
-[![release](https://img.shields.io/badge/release-v1.9-ff598c)](https://github.com/marblecake88/claude-limits-gachi-soundboard/releases)
+[![release](https://img.shields.io/badge/release-v1.9.1-ff598c)](https://github.com/marblecake88/claude-limits-gachi-soundboard/releases)
 [![downloads](https://img.shields.io/github/downloads/marblecake88/claude-limits-gachi-soundboard/total)](https://github.com/marblecake88/claude-limits-gachi-soundboard/releases)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 ![macos](https://img.shields.io/badge/macos-14%2B-black)
@@ -22,9 +22,10 @@
 **Не пропадает, когда в строке меню нет места.** У JetBrains и Xcode меню длинное, и macOS
 молча выкидывает иконки, которые не влезли. Если нас выкинуло, цифры сами переезжают в
 плавающую плашку и так же сами возвращаются, когда место освободилось. Плашка висит поверх
-всего, на всех рабочих столах и в полноэкранном режиме, где строки меню нет вообще.
-Перетаскивается мышкой, по клику открывает ту же панель, бегущая строка в ней та же.
-Тумблером в панели её можно держать постоянно.
+всего и на всех рабочих столах, перетаскивается мышкой, по клику открывает ту же панель,
+бегущая строка в ней та же. Когда строка меню спрятана целиком, в полноэкранном режиме или
+кино, плашка не вылезает: цифр сейчас нет ни у кого, и мешать незачем. Тумблером в панели
+её можно держать постоянно, тогда видно и в полный экран.
 
 **Зовёт, когда claude закончил.** Работаешь в одном окне, claude пилит задачу в другом.
 Закончил и ждёт тебя, а ты этого не видишь. Включаешь READY ALERTS, и строка меню
@@ -132,9 +133,10 @@ see the edge without reading. Data comes from claude itself and costs no tokens.
 **Does not disappear when the menu bar runs out of room.** JetBrains IDEs and Xcode have long
 menus, and macOS silently drops the icons that no longer fit. If we get dropped, the numbers
 move to a floating plaque on their own, and move back once there is room again. The plaque
-sits above everything, on every desktop and in fullscreen, where there is no menu bar at all.
-Drag it where you like, click it to open the same panel, same marquee inside. A switch in the
-panel keeps it on permanently.
+sits above everything, on every desktop, drags where you like, and opens the same panel on a
+click, same marquee inside. When the menu bar is hidden altogether, fullscreen or a movie, the
+plaque stays away: nobody's numbers are showing right now, so there is nothing to fix. A
+switch in the panel keeps it on permanently, fullscreen included.
 
 **Calls you when claude is done.** You work in one window while claude grinds away in
 another. It finishes, waits for you, and you never notice. Turn on READY ALERTS and the menu

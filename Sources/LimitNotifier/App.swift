@@ -79,14 +79,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Сколько после запуска не верим тому, что строка меню про нас говорит.
     private static let settleDelay: TimeInterval = 3
 
-    /// Строка меню перекладывается на смене активного приложения: у нового меню
-    /// может быть длиннее, и наш элемент выкинут. Ждём, пока система закончит
-    /// раскладку, и только потом смотрим, рисуют ли нас.
+    /// Когда пересматривать решение.
+    ///
+    /// Смена активного приложения: у нового меню может быть длиннее, и наш
+    /// элемент выкинут. Смена рабочего стола: переход в полноэкранный режим и
+    /// обратно это как раз она, а там строки меню нет вовсе.
+    ///
+    /// Плюс редкий опрос, пока плашка висит: плеер может спрятать строку меню,
+    /// не заводя своего рабочего стола, и тогда уведомления не будет. Опрос
+    /// стоит около миллисекунды, поэтому пять секунд тут не жалко, а когда
+    /// плашки нет, он и не работает.
     private func watchAppSwitch() {
-        NSWorkspace.shared.notificationCenter.addObserver(
-            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.checkSoon() }
+        let center = NSWorkspace.shared.notificationCenter
+        for name in [NSWorkspace.didActivateApplicationNotification,
+                     NSWorkspace.activeSpaceDidChangeNotification] {
+            center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.checkSoon() }
+            }
+        }
+        Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.plaque?.isVisible == true else { return }
+                self.checkSqueeze()
+            }
         }
     }
 
@@ -115,19 +130,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // проверке окна ждём пару секунд: иначе на запуске плашка успевает
         // мигнуть и сразу спрятаться.
         guard Date().timeIntervalSince(startedAt) > Self.settleDelay else { return }
-        let squeezed = squeeze.update(drawn: MenuBar.isDrawn(number))
-        let wanted = model.settings.plaqueAlways || squeezed
+
+        let bar = MenuBar.state(ours: number)
+        let wanted = PlaquePlan.wanted(always: model.settings.plaqueAlways,
+                                       barShowing: bar.showing) {
+            squeeze.update(drawn: bar.ours)
+        }
         guard wanted != plaque.isVisible else { return }
+
+        let reason: String
+        if model.settings.plaqueAlways {
+            reason = "включена в настройках"
+        } else if !bar.showing {
+            reason = "строки меню не видно"
+        } else {
+            reason = wanted ? "вытеснены из строки меню" : "место в строке меню вернулось"
+        }
         if wanted {
             plaque.show()
             drawTape(offset: lastOffset)   // сразу с актуальной лентой, а не пустой пилюлей
-            Log.write("плашка показана: " + (squeezed ? "вытеснены из строки меню" : "включена в настройках"))
+            Log.write("плашка показана: \(reason)")
         } else {
             // Пока от плашки открыта панель, не убираем: попап останется висеть
             // без опоры.
             if popover?.isShown == true, anchor === plaque.anchor { return }
             plaque.hide()
-            Log.write("плашка убрана: место в строке меню вернулось")
+            Log.write("плашка убрана: \(reason)")
         }
     }
 

@@ -1003,6 +1003,36 @@ struct SqueezeWatchTests {
         #expect(watch.update(drawn: false) == true)
     }
 
+    /// Полный экран и кино прячут строку меню целиком. Наш элемент там тоже не
+    /// нарисован, но это не вытеснение, и лезть поверх фильма не надо.
+    @Test("Строку меню спрятали целиком: плашки нет")
+    func hiddenBarStaysQuiet() {
+        var asked = false
+        let wanted = PlaquePlan.wanted(always: false, barShowing: false) {
+            asked = true
+            return true
+        }
+        #expect(wanted == false)
+        // И счётчик промахов при этом не трогаем: иначе за время фильма он
+        // накрутит промахов, и на выходе плашка выскочит на ровном месте.
+        #expect(asked == false)
+    }
+
+    @Test("Строка меню видна, нас выкинули: плашка нужна")
+    func squeezedWithVisibleBar() {
+        #expect(PlaquePlan.wanted(always: false, barShowing: true) { true })
+        #expect(PlaquePlan.wanted(always: false, barShowing: true) { false } == false)
+    }
+
+    /// Ручной режим сильнее всего: человек включил, значит хочет видеть, в том
+    /// числе и в полном экране.
+    @Test("Включённая руками плашка висит всегда")
+    func alwaysWins() {
+        var asked = false
+        #expect(PlaquePlan.wanted(always: true, barShowing: false) { asked = true; return false })
+        #expect(asked == false)
+    }
+
     /// Вытеснение не разовое событие, а состояние: пока места нет, плашка висит.
     @Test("Пока места нет, состояние держится")
     func staysSqueezed() {
