@@ -1496,3 +1496,25 @@ struct QuietTests {
         #expect(events.first?.transcript == "/tmp/a.jsonl")
     }
 }
+
+// MARK: - Свои же запуски claude
+
+@Suite("Не зовём сами себя")
+struct OwnRunsTests {
+
+    /// Ночной keep-alive запускался без рабочей папки, и хук присылал событие
+    /// с проектом "/". Строка меню звала на собственный будильник в четыре утра.
+    @Test("Запуск из корня не считается проектом")
+    func rootIsNotProject() {
+        #expect(ReadyLog.isOurProbe(cwd: "/"))
+        #expect(ReadyLog.parse(#"{"cwd":"/"}"#).isEmpty)
+        // Настоящие проекты по-прежнему проходят.
+        #expect(ReadyLog.isOurProbe(cwd: "/Users/k/PycharmProjects/drpmonitor") == false)
+    }
+
+    @Test("Опрос лимитов тоже не считается")
+    func probeIsNotProject() {
+        #expect(ReadyLog.isOurProbe(
+            cwd: "/Users/k/Library/Application Support/LimitNotifier/probe"))
+    }
+}

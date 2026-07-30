@@ -36,6 +36,12 @@ private enum Palette {
 
     static let yellow = Color(red: 0.99, green: 0.80, blue: 0.20)
     static let pink   = Color(red: 1.00, green: 0.35, blue: 0.55)
+
+    /// Имена закончивших проектов. Палитра общая со строкой меню, лежит в ядре.
+    static func project(_ index: Int) -> Color {
+        let step = ProjectPalette.step(index)
+        return Color(red: step.red, green: step.green, blue: step.blue)
+    }
 }
 
 private enum Metrics {
@@ -184,6 +190,10 @@ struct PanelView: View {
 
             Sep()
 
+            readyBlock()
+
+            Sep()
+
             SettingsBlock(
                 settings: model.settings,
                 nextPingText: model.nextPingText,
@@ -195,10 +205,6 @@ struct PanelView: View {
                 onWakeHelp: { model.showWakeHelp() },
                 onAnchor: { model.setAnchor(hour: $0, minute: $1) }
             )
-
-            Sep()
-
-            moneySection()
 
             Sep()
 
@@ -271,8 +277,10 @@ struct PanelView: View {
         // реально приходит: время сброса по окнам и метку обновления.
         // История за 8 окон тоже убрана: сервер её не отдаёт.
         VStack(alignment: .leading, spacing: 0) {
-            // Сброс сессии уже стоит в шапке, тут только остальные окна.
-            ForEach(snapshot.rows.filter { !$0.isSession }) { row in
+            // Сброс сессии уже стоит в шапке, а скоупные окна (fable и прочие)
+            // сбрасываются вместе с общим недельным: своя строка на каждое
+            // только занимала место одинаковыми числами.
+            ForEach(snapshot.rows.filter { $0.kind == "weekly_all" }) { row in
                 if let at = row.resetsAt {
                     ConfigRow(key: "\(row.label) resets", value: Fmt.until(at, from: now))
                 }
@@ -283,16 +291,35 @@ struct PanelView: View {
 
     // MARK: Деньги
 
-    /// Считается локально из транскриптов: в ответе API денег нет, поля
-    /// limit_dollars и used_dollars на подписке всегда null.
-    private func moneySection() -> some View {
+    // MARK: Уведомления об окончании
+
+    /// Стоит выше keep-alive: это то, ради чего в панель заглядывают чаще всего.
+    private func readyBlock() -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            ConfigRow(key: "Today", value: fmtMoney(model.spend.today))
-            ConfigRow(key: "Last 7 days", value: fmtMoney(model.spend.week))
-            Note(L.s("Клауде хочет чтоб вы думали что тратите именно столько",
-                     "Claude wants you to think this is what you spend"))
-            if !model.spend.unknownModels.isEmpty {
-                Note(L.s("Нет цены: ", "No price: ") + model.spend.unknownModels.joined(separator: ", "))
+            RowShell {
+                RowKey("READY ALERTS")
+                Spacer(minLength: 8)
+                Button(action: { model.notifyOn ? model.setNotify(false) : model.showNotifyHelp() }) {
+                    Text(model.notifyOn ? L.s("ВКЛ", "ON") : L.s("НАСТРОИТЬ", "SET UP"))
+                        .font(.system(size: 10, design: .monospaced))
+                        .tracking(Metrics.trackFoot)
+                        .foregroundStyle(model.notifyOn ? Palette.accent : Palette.dim)
+                        .padding(.horizontal, 8).padding(.vertical, 3)
+                        .overlay(RoundedRectangle(cornerRadius: 7)
+                            .stroke(model.notifyOn ? Palette.accent.opacity(0.5) : Palette.line,
+                                    lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+            }
+            if model.recent.isEmpty {
+                Note(L.s("Строка меню прокрутит имя проекта, когда claude в другом окне закончит",
+                         "The menu bar scrolls the project name when claude finishes in another window"))
+            } else {
+                ForEach(model.recent) { item in
+                    ReadyRow(item: item,
+                             onOpen: { model.openProject(item) },
+                             onDismiss: { model.dismiss(item.name) })
+                }
             }
         }
     }
@@ -544,39 +571,6 @@ private struct SettingsBlock: View {
             Note(L.s("Нужна, если закрываете мак на ночь. Вставьте команду в терминал один раз",
                      "Needed if your mac sleeps at night. Paste the command in a terminal once"))
 
-            Spacer().frame(height: 9)
-
-            RowShell {
-                RowKey("READY ALERTS")
-                Spacer(minLength: 8)
-                Button(action: onNotify) {
-                    Text(notifyOn ? L.s("ВКЛ", "ON") : L.s("НАСТРОИТЬ", "SET UP"))
-                        .font(.system(size: 10, design: .monospaced))
-                        .tracking(Metrics.trackFoot)
-                        .foregroundStyle(notifyOn ? Palette.accent : Palette.dim)
-                        .padding(.horizontal, 8).padding(.vertical, 3)
-                        .overlay(RoundedRectangle(cornerRadius: 7)
-                            .stroke(notifyOn ? Palette.accent.opacity(0.5) : Palette.line,
-                                    lineWidth: 1))
-                }
-                .buttonStyle(.plain)
-            }
-            Note(L.s("Строка меню прокрутит имя проекта, когда claude в другом окне закончит",
-                     "The menu bar scrolls the project name when claude finishes in another window"))
-
-            // Кто закончил. Зов в строке меню гаснет по клику, а список остаётся:
-            // иначе непонятно, что именно тебя звало.
-            if !recent.isEmpty {
-                ForEach(recent) { item in
-                    RowShell {
-                        RowKey(item.name)
-                        Spacer(minLength: 8)
-                        Text(hhmm(item.at))
-                            .font(Metrics.font).monospacedDigit()
-                            .foregroundStyle(Palette.faint)
-                    }
-                }
-            }
         }
     }
 
@@ -789,6 +783,48 @@ private struct FootButton: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+    }
+}
+
+
+/// Строка "кто закончил": по имени переходим к окну проекта, крестик просто
+/// убирает запись. Разведено намеренно: клик по всей строке был удобнее, но
+/// теперь у имени есть своё дело, и промахиваться мимо него нельзя.
+private struct ReadyRow: View {
+    let item: AppModel.Finished
+    let onOpen: () -> Void
+    let onDismiss: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Button(action: onOpen) {
+                Text(item.name.uppercased())
+                    .font(Metrics.font).tracking(Metrics.trackKey)
+                    .foregroundStyle(Palette.project(item.colorIndex))
+                    .lineLimit(1).truncationMode(.tail)
+                    .underline(hovering)
+            }
+            .buttonStyle(.plain)
+            .help(L.s("перейти к окну проекта", "go to the project window"))
+
+            Spacer(minLength: 8)
+            Text(hhmm(item.at))
+                .font(Metrics.font).monospacedDigit()
+                .foregroundStyle(Palette.faint)
+            // Крестик появляется под курсором, чтобы в покое не рябить.
+            Button(action: onDismiss) {
+                Text("×")
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(hovering ? Palette.hover : .clear)
+                    .frame(width: 10)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(L.s("убрать из списка", "remove from the list"))
+        }
+        .padding(.vertical, 3)
         .onHover { hovering = $0 }
     }
 }

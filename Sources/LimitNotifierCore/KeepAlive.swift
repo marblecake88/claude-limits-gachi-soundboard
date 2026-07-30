@@ -50,7 +50,11 @@ public enum Pinger {
     ///
     /// Haiku потому что 5-часовое окно общее для всех моделей, платить по
     /// ставкам Opus только ради открытия окна незачем.
-    public static func ping(claudePath: String, timeout: TimeInterval = 60) -> Result<String, String> {
+    /// - cwd: рабочая папка пинга. По умолчанию служебная, та же, что у опроса
+    ///   лимитов. Без неё пинг запускался из корня, и хук Stop присылал событие
+    ///   с проектом "/": ночью строка меню звала на собственный будильник.
+    public static func ping(claudePath: String, cwd: URL? = nil,
+                            timeout: TimeInterval = 60) -> Result<String, String> {
         // Настоящий запрос к модели, а не /usage: тот стоит ноль токенов и
         // именно поэтому окна НЕ открывает. Нам нужно окно, значит нужен
         // реальный вызов, и haiku тут самый дешёвый.
@@ -62,7 +66,10 @@ public enum Pinger {
             reason: "keep-alive ping")
         defer { ProcessInfo.processInfo.endActivity(awake) }
 
-        let result = Proc.run(claudePath, ["-p", "2+2", "--model", "haiku"], timeout: timeout)
+        let dir = cwd ?? UsageClient.defaultProbeDir
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let result = Proc.run(claudePath, ["-p", "2+2", "--model", "haiku"],
+                              timeout: timeout, cwd: dir)
         switch result {
         case .launchFailed(let message):
             return .failure("не смог запустить \(claudePath): \(message)")

@@ -44,7 +44,9 @@ public enum ReadyLog {
     /// Их надо выбрасывать, иначе приложение будет звать само себя каждые
     /// десять минут.
     public static func isOurProbe(cwd: String) -> Bool {
-        cwd.contains("/LimitNotifier/probe")
+        // Корень это не проект, а признак запуска без рабочей папки: так
+        // выглядел наш же ночной keep-alive, пока ему её не задали.
+        cwd == "/" || cwd.contains("/LimitNotifier/probe")
     }
 
     /// Разбирает то, что записал хук: по строке на событие, каждая строка это

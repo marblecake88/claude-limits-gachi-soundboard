@@ -29,6 +29,12 @@ public struct UsageStats: Sendable, Equatable {
     /// Дата, до которой (включительно) кэш claude достоверен. Дни после неё
     /// берём из транскриптов: кэш пересчитывается раз в сутки.
     public let cacheUpTo: String?
+    /// Во сколько обошёлся бы весь объём по тарифам API, по моделям.
+    ///
+    /// Считается из тех же полей кэша, что и полный объём, то есть с кэшевыми
+    /// токенами. Это важно: чтение кэша стоит десятую часть входа, но его в
+    /// сотни раз больше, и без него сумма занижена в разы.
+    public let lifetimeCost: [String: Double]
     public let bestStreak: Int
     public let currentStreak: Int
     public let scannedAt: Date
@@ -36,9 +42,11 @@ public struct UsageStats: Sendable, Equatable {
     public init(days: [String: [String: Int]], hours: [String: [String: Int]],
                 requests: [String: Int], transcripts: Int,
                 bestStreak: Int, currentStreak: Int, scannedAt: Date,
-                lifetimeTokens: Int = 0, cacheUpTo: String? = nil) {
+                lifetimeTokens: Int = 0, cacheUpTo: String? = nil,
+                lifetimeCost: [String: Double] = [:]) {
         self.lifetimeTokens = lifetimeTokens
         self.cacheUpTo = cacheUpTo
+        self.lifetimeCost = lifetimeCost
         self.days = days
         self.hours = hours
         self.requests = requests
@@ -51,9 +59,11 @@ public struct UsageStats: Sendable, Equatable {
     public static let empty = UsageStats(days: [:], hours: [:], requests: [:], transcripts: 0,
                                          bestStreak: 0, currentStreak: 0,
                                          scannedAt: Date(timeIntervalSince1970: 0),
-                                         lifetimeTokens: 0, cacheUpTo: nil)
+                                         lifetimeTokens: 0, cacheUpTo: nil, lifetimeCost: [:])
 
     public var isEmpty: Bool { days.isEmpty }
+    /// Сумма по всем моделям, за которые есть тариф.
+    public var lifetimeCostTotal: Double { lifetimeCost.values.reduce(0, +) }
     public var sortedDays: [String] { days.keys.sorted() }
     public var activeDays: Int { days.count }
 
@@ -253,12 +263,24 @@ public enum StatsScanner {
         // Полный объём: тут же в кэше лежат и кэшевые токены, по моделям за
         // всё время. По дням такой разбивки нет, поэтому только итог.
         var lifetime = 0
-        for usage in (root["modelUsage"] as? [String: Any] ?? [:]).values {
+        var cost: [String: Double] = [:]
+        for (model, usage) in root["modelUsage"] as? [String: Any] ?? [:] {
             guard let fields = usage as? [String: Any] else { continue }
             lifetime += CostScanner.int(fields["inputTokens"])
                 + CostScanner.int(fields["outputTokens"])
                 + CostScanner.int(fields["cacheReadInputTokens"])
                 + CostScanner.int(fields["cacheCreationInputTokens"])
+
+            // Поля кэша называются иначе, чем в транскриптах, поэтому
+            // перекладываем их в тот вид, который понимает счётчик стоимости.
+            guard let prices = Pricing.forModel(model) else { continue }
+            let usageForPrice: [String: Any] = [
+                "input_tokens": CostScanner.int(fields["inputTokens"]),
+                "output_tokens": CostScanner.int(fields["outputTokens"]),
+                "cache_read_input_tokens": CostScanner.int(fields["cacheReadInputTokens"]),
+                "cache_creation_input_tokens": CostScanner.int(fields["cacheCreationInputTokens"]),
+            ]
+            cost[shortName(model)] = CostScanner.price(usage: usageForPrice, prices: prices)
         }
 
         let (best, current) = streaks(days.keys.sorted(), now: now, calendar: calendar)
@@ -266,7 +288,8 @@ public enum StatsScanner {
                           transcripts: CostScanner.int(root["totalSessions"]),
                           bestStreak: best, currentStreak: current, scannedAt: now,
                           lifetimeTokens: lifetime,
-                          cacheUpTo: root["lastComputedDate"] as? String)
+                          cacheUpTo: root["lastComputedDate"] as? String,
+                          lifetimeCost: cost)
     }
 
     /// Свежий скан дополняет кэш днями, которых тот ещё не посчитал.
@@ -287,7 +310,8 @@ public enum StatsScanner {
         return UsageStats(days: days, hours: fresh.hours, requests: requests,
                           transcripts: max(cached.transcripts, fresh.transcripts),
                           bestStreak: best, currentStreak: current, scannedAt: now,
-                          lifetimeTokens: cached.lifetimeTokens, cacheUpTo: cached.cacheUpTo)
+                          lifetimeTokens: cached.lifetimeTokens, cacheUpTo: cached.cacheUpTo,
+                          lifetimeCost: cached.lifetimeCost)
     }
 
     /// Проход по транскриптам. Запасной путь и источник сегодняшних часов.

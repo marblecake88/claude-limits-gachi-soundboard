@@ -1,6 +1,6 @@
 # claude limits gachi soundboard
 
-[![release](https://img.shields.io/badge/release-v1.7.2-ff598c)](https://github.com/marblecake88/claude-limits-gachi-soundboard/releases)
+[![release](https://img.shields.io/badge/release-v1.8-ff598c)](https://github.com/marblecake88/claude-limits-gachi-soundboard/releases)
 [![downloads](https://img.shields.io/github/downloads/marblecake88/claude-limits-gachi-soundboard/total)](https://github.com/marblecake88/claude-limits-gachi-soundboard/releases)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 ![macos](https://img.shields.io/badge/macos-14%2B-black)
@@ -8,26 +8,37 @@
 
 [English below](#english)
 
-Гачи-саундборд в строке меню макоса. Заодно показывает лимиты Claude Code и умеет
-будить Claude ночью, чтобы к твоему пробуждению у тебя было 99% 5часового лимита и час до закрытия окна.
+Лимиты Claude Code в строке меню мака. Зовёт, когда claude в другом окне закончил работу.
+Будит claude ночью, чтобы к твоему пробуждению было свежее окно. Заодно гачи-саундборд.
 
 ## что умеет
 
-- саундборд: жмёшь кошку, играет случайный гачи звук. или тыкаешь конкретный на сетке
-- лимиты Claude прямо в строке меню: 5-часовое окно, недельный, сколько до сброса
-- keep-alive: в нужное время стартует клаудекоде окно, чтобы к нужному часу у тебя было 99% лимита и час до закрытия окна.
-  работаешь с 8, ставишь 9. если мак спит ночью, приложение показывает команду для pmset,
-  которую надо один раз вставить в терминал: прав приложение не просит
-- трата в долларах по тарифам API, считается локально из транскриптов
-- статистика: жмёшь STATS в панели лимитов, окно разъезжается вправо. токены по дням,
-  активность, модели, стрики. периоды сегодня/неделя/месяц/всё
-- уведомления об окончании: когда claude в другом окне закончил и ждёт вас, строка меню
-  прокручивает имя проекта. включается кнопкой в панели, ставит хук в настройки claude.
-  если вы смотрите в то же окно, приложение молчит (для этого нужен доступ к Accessibility)
-- интерфейс на английском, если система не русская. переключатель RU/EN в панели
+**Лимиты всегда на виду.** В строке меню `84/34/1h07/4d`: 5-часовое окно, недельный лимит,
+сколько осталось до сброса каждого. Цифры меняют цвет на 60, 79 и 89 процентах, так что
+край видно не читая. Данные берутся из самого claude, никаких токенов на это не тратится.
 
-Строка меню всегда показывает лимиты. По клику открывается борд, лимиты вторым
-экраном. Зайдёшь в лимиты хоть раз, дальше открывается сразу на них.
+**Зовёт, когда claude закончил.** Работаешь в одном окне, claude пилит задачу в другом.
+Закончил и ждёт тебя, а ты этого не видишь. Включаешь READY ALERTS, и строка меню
+прокручивает имя проекта: лимиты уезжают влево, за ними едут имена. Клик по имени в панели
+переносит к тому окну, включая переключение рабочего стола. Если ты и так смотришь в это
+окно, приложение молчит.
+
+**Будит claude ночью.** Пятичасовое окно открывается первым запросом, а не по расписанию.
+Значит если начать работать в девять, окно закроется в два, посреди дня. Keep-alive
+поджигает пустое окно заранее, чтобы к нужному тебе часу лимит был полным: работаешь с 8,
+ставишь 9. Если мак спит, приложение подскажет команду для будильника.
+
+**Статистика.** Жмёшь STATS, и панель разъезжается вправо: токены по дням, часам или
+неделям, карта активности за всё время, доли моделей, стрики. Плюс деньги по тарифам API,
+за сегодня, за неделю и за всё время, с разбивкой по моделям. Считается локально из
+транскриптов и кэша claude, цифры сходятся с его собственной вкладкой Stats.
+
+**Гачи-саундборд.** Тридцать звуков. Жмёшь кошку, играет случайный, или тыкаешь конкретный
+на сетке. Ради этого всё и затевалось.
+
+Строка меню всегда показывает лимиты. По клику открывается борд, лимиты вторым экраном.
+Зайдёшь в лимиты хоть раз, дальше открывается сразу на них. Интерфейс на английском, если
+система не русская, переключатель RU/EN в панели.
 
 ## скрины
 
@@ -96,27 +107,37 @@ homebrew в конце установки печатает пару команд
 
 ## English
 
-Gachi soundboard for the macOS menu bar. It also shows your Claude Code limits and wakes
-Claude overnight so by the time you wake up you have 99% of the 5-hour limit and an hour before the window closes.
+Claude Code usage limits in the macOS menu bar. Calls you when claude finishes in another
+window. Wakes claude overnight so your window is fresh by morning. Plus a gachi soundboard.
 
 ### what it does
 
-- soundboard: click the cat for a random gachi, or tap a specific one on the grid
-- Claude limits right in the menu bar: 5-hour window, weekly, time to reset
-- keep-alive: starts a claude-code window at the set time, so by your hour you have 99% of the limit
-  and an hour before it closes. you start at 8, set it to 9. if your mac sleeps at night, the app
-  shows a pmset command to paste in a terminal once: the app never asks for privileges
-- spend in dollars at API rates, computed locally from transcripts
-- statistics: hit STATS on the limits panel and the window expands to the right — tokens per day,
-  activity, models, streaks. today / week / month / all time. per-day numbers exclude cache
-  (same as claude), the full volume with cache is shown on its own line
-- ready alerts: when claude finishes in another window and waits for you, the menu bar scrolls
-  the project name past. turn it on in the panel, it installs a hook into claude's settings.
-  if you're looking at that same window, the app stays quiet (needs Accessibility access for that)
-- the UI is English unless your system is Russian, with an RU/EN switch in the panel
+**Limits always visible.** `84/34/1h07/4d` in the menu bar: the 5-hour window, the weekly
+limit, and time until each resets. Numbers change colour at 60, 79 and 89 percent, so you
+see the edge without reading. Data comes from claude itself and costs no tokens.
 
-The menu bar always shows limits. Click opens the board, limits are the second screen.
-Once you open limits, next time it opens straight to them.
+**Calls you when claude is done.** You work in one window while claude grinds away in
+another. It finishes, waits for you, and you never notice. Turn on READY ALERTS and the menu
+bar scrolls the project name past: limits slide out to the left, names follow. Clicking a
+name in the panel takes you to that window, switching desktops if needed. If you are already
+looking at that window, the app stays quiet.
+
+**Wakes claude overnight.** The 5-hour window opens on your first request, not on a
+schedule, so starting at nine means it closes at two, in the middle of your day. Keep-alive
+burns an empty window early, so the limit is full by the hour you choose: start at 8, set 9.
+If your mac sleeps, the app hands you the command for a wake timer.
+
+**Statistics.** Hit STATS and the panel expands to the right: tokens per day, hour or week,
+an activity map for all time, model shares, streaks. Plus spend at API rates for today, the
+week and all time, broken down by model. Computed locally from transcripts and claude's own
+cache, and the numbers match its Stats tab.
+
+**Gachi soundboard.** Thirty sounds. Click the cat for a random one, or tap a specific one
+on the grid. This is what the whole thing was built for.
+
+The menu bar always shows limits. Click opens the board, limits are the second screen. Once
+you open limits, next time it opens straight to them. The UI is English unless your system
+is Russian, with an RU/EN switch in the panel.
 
 ### install
 

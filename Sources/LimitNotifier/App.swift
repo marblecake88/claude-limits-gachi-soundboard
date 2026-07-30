@@ -139,14 +139,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return NSFont.monospacedDigitSystemFont(ofSize: size, weight: .regular)
     }()
 
-    /// Цвета имён: три ступени синего. Холодная гамма намеренно, чтобы имена не
-    /// читались как продолжение шкалы лимитов, где зелёный, жёлтый и розовый
-    /// уже значат "насколько всё плохо".
-    private static let projectColors: [NSColor] = [
-        NSColor(srgbRed: 0xa8/255, green: 0xd8/255, blue: 1.0, alpha: 1),
-        NSColor(srgbRed: 0x6a/255, green: 0xa9/255, blue: 0xe8/255, alpha: 1),
-        NSColor(srgbRed: 0x4a/255, green: 0x7f/255, blue: 0xc0/255, alpha: 1),
-    ]
+    /// Цвета имён берём из ядра: та же палитра, что в панели.
+    private static let projectColors: [NSColor] = ProjectPalette.steps.map {
+        NSColor(srgbRed: $0.red, green: $0.green, blue: $0.blue, alpha: 1)
+    }
 
     // MARK: - Лента
 
@@ -314,6 +310,13 @@ final class AppModel: ObservableObject {
     struct Finished: Identifiable, Equatable {
         let name: String
         let at: Date
+        /// Место в очереди зова на момент, когда позвали. Панель красит имя
+        /// так же, как красила лента: иначе один и тот же проект был бы в
+        /// строке меню одного цвета, а в списке другого.
+        let colorIndex: Int
+        /// Полный путь папки: по нему открываем проект редактором, когда через
+        /// Accessibility окно не нашлось.
+        let path: String
         var id: String { name }
     }
     @Published private(set) var notifyOn = HookInstaller.isInstalled
@@ -343,10 +346,15 @@ final class AppModel: ObservableObject {
         // Новое событие вытесняет прежнее ожидание по тому же проекту: отсчёт
         // тишины начинается заново.
         for event in ReadyLog.drain() {
+            let repeated = pending.contains { $0.project == event.project }
             pending.removeAll { $0.project == event.project }
             pending.append(event)
             // Работа пошла снова, значит прежний зов больше не актуален.
             ready.removeAll { $0 == event.project }
+            called.removeValue(forKey: event.project)
+            Log.write("событие: \(event.project)"
+                      + (repeated ? ", отсчёт заново" : "")
+                      + ", жду \(Int(Quiet.delay))с тишины")
         }
         // Человек вернулся в окно проекта: зов свою работу сделал. Проверяем на
         // каждом тике, а не только в момент появления, иначе зов висит и крутит
@@ -393,13 +401,16 @@ final class AppModel: ObservableObject {
         let name = event.project
         // Если человек уже смотрит в это окно, звать незачем.
         if FocusProbe.looksFocused(project: name) {
-            Log.write("готово \(name), но окно в фокусе, не зову")
+            // Заголовок пишем и здесь: иначе непонятно, действительно ли человек
+            // смотрел в это окно или совпало что-то постороннее.
+            Log.write("готово \(name), но окно в фокусе, не зову · \(FocusProbe.describe())")
             return
         }
         if !ready.contains(name) { ready.append(name) }
+        let place = ready.firstIndex(of: name) ?? 0
         called[name] = (transcript: event.transcript, at: Date())
         recent.removeAll { $0.name == name }
-        recent.insert(Finished(name: name, at: event.at), at: 0)
+        recent.insert(Finished(name: name, at: event.at, colorIndex: place, path: event.cwd), at: 0)
         if recent.count > 5 { recent.removeLast(recent.count - 5) }
         Log.write("готово: \(name) · \(FocusProbe.describe())")
     }
@@ -409,8 +420,26 @@ final class AppModel: ObservableObject {
     }
 
     /// Гасим зов: человек открыл панель, значит увидел.
+    /// Перейти к окну проекта. Раз идём туда сами, зов больше не нужен.
+    func openProject(_ item: Finished) {
+        dismiss(item.name)
+        // В фоне: переключение зовёт внешние процессы, и держать на них главный
+        // поток значит подвесить панель на время перехода.
+        Task.detached(priority: .userInitiated) {
+            WindowSwitcher.focus(project: item.name, path: item.path)
+        }
+    }
+
+    /// Убрать одну запись из списка: клик по крестику.
+    func dismiss(_ name: String) {
+        recent.removeAll { $0.name == name }
+        ready.removeAll { $0 == name }
+        called.removeValue(forKey: name)
+    }
+
     func clearReady() {
         guard !ready.isEmpty else { return }
+        Log.write("зов погашен, панель открыта: \(ready.joined(separator: ", "))")
         ready = []
         called = [:]
     }
@@ -422,7 +451,9 @@ final class AppModel: ObservableObject {
             return
         }
         notifyOn = HookInstaller.isInstalled
-        Log.write("уведомления об окончании \(notifyOn ? "включены" : "выключены")")
+        Log.write("уведомления об окончании \(notifyOn ? "включены" : "выключены")"
+                  + " · хук \(HookInstaller.scriptURL.path)"
+                  + " · accessibility \(FocusProbe.isTrusted ? "есть" : "нет")")
         if !notifyOn { ready = []; pending = [] }
         watchReady()
     }
@@ -549,7 +580,15 @@ final class AppModel: ObservableObject {
         // на системном, а сохранённый выбор подхватится только со второго раза.
         if let saved = settings.language { L.lang = saved }
         Log.trim()
-        Log.write("app started")
+        // Пишем сразу всё, что понадобится при разборе чужого лога: версию,
+        // билд и состояние того, что включается руками.
+        let info = Bundle.main.infoDictionary
+        let build = info?["BuildSHA"] as? String ?? "?"
+        Log.write("app started · v\(currentVersion) \(build)"
+                  + " · уведомления \(HookInstaller.isInstalled ? "вкл" : "выкл")"
+                  + " · accessibility \(FocusProbe.isTrusted ? "есть" : "нет")"
+                  + " · keep-alive \(settings.keepAliveEnabled ? "вкл" : "выкл")"
+                  + " · язык \(L.lang == .ru ? "ru" : "en")")
         startPolling()
         rescheduleKeepAlive()
         rescanSpend(force: true)
@@ -887,15 +926,37 @@ final class AppModel: ObservableObject {
         hhmm.dateFormat = "HH:mm"
         nextPingText = hhmm.string(from: ping) + L.s(", через ", ", in ") + Fmt.until(ping)
 
+        // Если до пинга осталось немного, не даём маку заснуть обратно.
+        //
+        // pmset будит его ненадолго: проснулся, ничего срочного не нашёл, снова
+        // спит. Отложенная задача во сне не выполняется, и пинг уходит при
+        // следующем пробуждении. В ночь на 28 июля мак проснулся в 03:43, пинг
+        // должен был уйти в 03:45, а ушёл в 03:56, и окно закрылось на двенадцать
+        // минут позже нужного.
+        let waking = holdAwakeIfSoon(until: ping)
+
         keepAliveTask = Task { [weak self] in
             let delay = ping.timeIntervalSinceNow
             if delay > 0 {
                 try? await Task.sleep(for: .seconds(delay))
             }
+            defer { if let waking { ProcessInfo.processInfo.endActivity(waking) } }
             guard !Task.isCancelled else { return }
             await self?.firePing()
             self?.rescheduleKeepAlive()
         }
+    }
+
+    /// Держит мак бодрым до пинга, если тот вот-вот. Возвращает удержание,
+    /// которое надо отпустить, или nil, если ждать ещё долго и держать незачем.
+    private func holdAwakeIfSoon(until ping: Date,
+                                 window: TimeInterval = 20 * 60) -> NSObjectProtocol? {
+        let left = ping.timeIntervalSinceNow
+        guard left > 0, left <= window else { return nil }
+        Log.write("до пинга \(Int(left / 60))м, держу мак бодрым")
+        return ProcessInfo.processInfo.beginActivity(
+            options: [.userInitiated, .idleSystemSleepDisabled],
+            reason: "keep-alive: ждём момент пинга")
     }
 
     private func firePing() async {

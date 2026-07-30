@@ -32,6 +32,8 @@ struct StatsPane: View {
                 Divider().overlay(StatsPalette.line).padding(.vertical, 11)
                 bottom(s)
                 Divider().overlay(StatsPalette.line).padding(.vertical, 10)
+                money()
+                Divider().overlay(StatsPalette.line).padding(.vertical, 10)
                 record()
             }
         }
@@ -176,6 +178,67 @@ struct StatsPane: View {
             Text("\(percent)%").font(StatsMetrics.small).monospacedDigit()
                 .foregroundStyle(StatsPalette.value)
         }
+    }
+
+    // MARK: Деньги
+
+    /// Во сколько обошёлся бы объём по тарифам API.
+    ///
+    /// Раньше жило в панели лимитов двумя строками, но там для этого мало
+    /// места: тут помещается и разбивка по моделям, и честная сумма за всё
+    /// время, посчитанная с кэшевыми токенами.
+    private func money() -> some View {
+        let lifetime = model.stats.lifetimeCost
+        let total = model.stats.lifetimeCostTotal
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text(L.s("ПО ТАРИФАМ API", "AT API RATES"))
+                    .font(StatsMetrics.font).tracking(0.9)
+                    .foregroundStyle(StatsPalette.key)
+                Spacer(minLength: 6)
+                Text(L.s("Клауде хочет чтоб вы думали что тратите именно столько",
+                         "Claude wants you to think this is what you spend"))
+                    .font(StatsMetrics.tiny).foregroundStyle(StatsPalette.faint)
+                    .lineLimit(2).minimumScaleFactor(0.85)
+            }
+            HStack(spacing: 1) {
+                kpi(L.s("СЕГОДНЯ", "TODAY"), money(model.spend.today))
+                kpi(L.s("7 ДНЕЙ", "7 DAYS"), money(model.spend.week))
+                kpi(L.s("ЗА ВСЁ ВРЕМЯ", "ALL TIME"), money(total), accent: true)
+            }
+            .background(StatsPalette.line)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(StatsPalette.line, lineWidth: 1))
+
+            if total > 0 {
+                // По моделям: видно, кто съедает бюджет. Считается с кэшем,
+                // поэтому суммы сильно больше, чем кажется по токенам.
+                let sorted = lifetime.sorted { $0.value > $1.value }.prefix(4)
+                HStack(spacing: 12) {
+                    ForEach(Array(sorted.enumerated()), id: \.element.key) { index, item in
+                        HStack(spacing: 5) {
+                            RoundedRectangle(cornerRadius: 2)
+                                .fill(StatsPalette.series(index))
+                                .frame(width: 7, height: 7)
+                            Text(item.key).font(StatsMetrics.small)
+                                .foregroundStyle(StatsPalette.key)
+                            Text(money(item.value)).font(StatsMetrics.small).monospacedDigit()
+                                .foregroundStyle(StatsPalette.value)
+                        }
+                    }
+                }
+            }
+            if !model.spend.unknownModels.isEmpty {
+                Text(L.s("без тарифа: ", "no rate: ")
+                     + model.spend.unknownModels.joined(separator: ", "))
+                    .font(StatsMetrics.tiny).foregroundStyle(StatsPalette.faint)
+            }
+        }
+    }
+
+    /// Центы важны на мелких суммах, на крупных это шум.
+    private func money(_ value: Double) -> String {
+        value >= 100 ? String(format: "$%.0f", value) : String(format: "$%.2f", value)
     }
 
     // MARK: Рекорд одной строкой
