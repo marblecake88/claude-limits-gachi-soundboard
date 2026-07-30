@@ -8,6 +8,8 @@
 
 [English below](#english)
 
+<img src="docs/marquee.gif" width="408" alt="строка меню прокручивает имена проектов">
+
 Лимиты Claude Code в строке меню мака. Зовёт, когда claude в другом окне закончил работу.
 Будит claude ночью, чтобы к твоему пробуждению было свежее окно. Заодно гачи-саундборд.
 
@@ -42,7 +44,11 @@
 
 ## скрины
 
-<img src="docs/board.png" width="300"> <img src="docs/limits.png" width="300">
+<img src="docs/limits.png" width="300"> <img src="docs/board.png" width="300">
+
+Статистика разъезжается вправо по кнопке STATS:
+
+<img src="docs/stats.png" width="620">
 
 ## поставить
 
@@ -138,6 +144,14 @@ on the grid. This is what the whole thing was built for.
 The menu bar always shows limits. Click opens the board, limits are the second screen. Once
 you open limits, next time it opens straight to them. The UI is English unless your system
 is Russian, with an RU/EN switch in the panel.
+
+### screenshots
+
+<img src="docs/limits.png" width="300"> <img src="docs/board.png" width="300">
+
+Statistics expand to the right when you hit STATS:
+
+<img src="docs/stats.png" width="620">
 
 ### install
 
