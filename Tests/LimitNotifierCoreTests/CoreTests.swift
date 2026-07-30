@@ -1453,6 +1453,44 @@ struct ReadyLogTests {
 
 // MARK: - Установка хука в чужой файл настроек
 
+@Suite("Папка проекта и вложенность")
+struct ProjectPathTests {
+
+    @Test("Сама папка накрывает себя")
+    func sameFolder() {
+        #expect(ProjectPath.covers(folder: "/work/app", path: "/work/app"))
+        // Хвостовой слэш в локах встречается, и он ничего не меняет.
+        #expect(ProjectPath.covers(folder: "/work/app/", path: "/work/app"))
+    }
+
+    /// Ради этого всё и затевалось: claude запускают в подпапке, а редактор
+    /// держит корень проекта.
+    @Test("Родительская папка накрывает вложенную")
+    func nested() {
+        #expect(ProjectPath.covers(folder: "/Users/k/PycharmProjects/100memesbot",
+                                   path: "/Users/k/PycharmProjects/100memesbot/Reps"))
+        #expect(ProjectPath.covers(folder: "/work", path: "/work/a/b/c"))
+    }
+
+    /// Сравнение по границе сегмента, иначе соседний проект с похожим именем
+    /// сойдёт за родителя, и мы поднимем чужое окно.
+    @Test("Похожее имя рядом не считается")
+    func neighbourNotCovered() {
+        #expect(ProjectPath.covers(folder: "/work/app", path: "/work/app-old") == false)
+        #expect(ProjectPath.covers(folder: "/work/app", path: "/work/application") == false)
+    }
+
+    @Test("Вложенная папка не накрывает родителя")
+    func childDoesNotCoverParent() {
+        #expect(ProjectPath.covers(folder: "/work/app/sub", path: "/work/app") == false)
+    }
+
+    @Test("Корень накрывает всё")
+    func rootCoversEverything() {
+        #expect(ProjectPath.covers(folder: "/", path: "/work/app"))
+    }
+}
+
 @Suite("Хук в настройках claude")
 struct HookInstallerTests {
 

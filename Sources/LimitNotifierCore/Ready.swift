@@ -84,6 +84,24 @@ public enum ReadyLog {
 /// Правим ~/.claude/settings.json, потому что хуки живут там и работают
 /// одинаково для CLI и для расширения VS Code: под капотом это один бинарь.
 /// Чужие настройки и чужие хуки не трогаем, свой узнаём по пути к скрипту.
+/// Сравнение путей проекта.
+public enum ProjectPath {
+    /// Лежит ли путь внутри папки (или это она сама).
+    ///
+    /// Нужно затем, что claude часто запускают во вложенной папке проекта, а
+    /// редактор держит открытым корень. Просить редактор открыть вложенную папку
+    /// нельзя: он заведёт для неё новое окно вместо того, чтобы поднять то, где
+    /// проект уже открыт.
+    ///
+    /// Сравниваем по границе сегмента, иначе "/work/app" считалось бы родителем
+    /// для "/work/app-old".
+    public static func covers(folder: String, path: String) -> Bool {
+        let root = folder.hasSuffix("/") ? String(folder.dropLast()) : folder
+        guard !root.isEmpty else { return true }   // "/" накрывает всё
+        return path == root || path.hasPrefix(root + "/")
+    }
+}
+
 public enum HookInstaller {
     public static var settingsURL: URL {
         URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".claude/settings.json")

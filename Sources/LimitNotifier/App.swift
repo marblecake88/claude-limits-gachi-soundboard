@@ -542,14 +542,25 @@ final class AppModel: ObservableObject {
         (try? FileManager.default.attributesOfItem(atPath: path))?[.modificationDate] as? Date
     }
 
-    /// Гасим зов: человек открыл панель, значит увидел.
-    /// Перейти к окну проекта. Раз идём туда сами, зов больше не нужен.
+    /// Перейти к окну проекта.
+    ///
+    /// Строку гасим только если переход удался. Иначе получалось худшее из
+    /// двух: окно не открылось, и строка, по которой можно было щёлкнуть ещё
+    /// раз, тоже пропала.
     func openProject(_ item: Finished) {
-        dismiss(item.name)
-        // В фоне: переключение зовёт внешние процессы, и держать на них главный
-        // поток значит подвесить панель на время перехода.
-        Task.detached(priority: .userInitiated) {
-            WindowSwitcher.focus(project: item.name, path: item.path)
+        let name = item.name, path = item.path
+        Task { [weak self] in
+            // Сам переход в фоне: он зовёт внешние процессы, и держать на них
+            // главный поток значит подвесить панель на время перехода.
+            let moved = await Task.detached(priority: .userInitiated) {
+                WindowSwitcher.focus(project: name, path: path)
+            }.value
+            guard let self else { return }
+            if moved {
+                self.dismiss(name)
+            } else {
+                Log.write("к \(name) перейти не вышло, строку оставляю")
+            }
         }
     }
 

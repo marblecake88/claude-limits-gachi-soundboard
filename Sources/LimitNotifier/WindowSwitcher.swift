@@ -56,30 +56,44 @@ enum WindowSwitcher {
             if ms > 400 { Log.write("переход к \(project) занял \(ms)мс") }
         }
 
-        if let path, let ide = ideHolding(path: path),
-           openInEditor(project: project, path: path, ide: ide) {
+        if let path, let holder = ideHolding(path: path),
+           openInEditor(project: project, path: holder.folder, ide: holder.ide) {
             return true
         }
         if focusViaAccessibility(project: project) { return true }
         return false
     }
 
-    /// В каком редакторе открыта папка. Claude Code держит по файлу на каждое
-    /// подключённое окно и пишет туда и список папок, и имя редактора, так что
-    /// угадывать не нужно.
-    private static func ideHolding(path: String) -> String? {
+    /// В каком редакторе открыта папка и какую именно папку он держит.
+    ///
+    /// Claude Code держит по файлу на каждое подключённое окно и пишет туда и
+    /// список папок, и имя редактора, так что угадывать не нужно.
+    ///
+    /// Совпадение ищем не точное, а по вложенности: claude часто запускают в
+    /// подпапке проекта, тогда как редактор открыл корень. Открывать надо
+    /// именно корень, иначе редактор заведёт новое окно на подпапку вместо
+    /// того, чтобы поднять уже открытое.
+    private static func ideHolding(path: String) -> (ide: String, folder: String)? {
         let dir = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".claude/ide")
         guard let files = try? FileManager.default.contentsOfDirectory(
             at: dir, includingPropertiesForKeys: nil) else { return nil }
 
+        var best: (ide: String, folder: String)?
         for file in files where file.pathExtension == "lock" {
             guard let data = try? Data(contentsOf: file),
                   let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-                  let folders = json["workspaceFolders"] as? [String], folders.contains(path)
+                  let folders = json["workspaceFolders"] as? [String],
+                  let ide = json["ideName"] as? String
             else { continue }
-            return json["ideName"] as? String
+            for folder in folders where ProjectPath.covers(folder: folder, path: path) {
+                // Из подходящих берём самую глубокую: если открыты и корень, и
+                // подпапка, ближе к цели вторая.
+                if best == nil || folder.count > best!.folder.count {
+                    best = (ide, folder)
+                }
+            }
         }
-        return nil
+        return best
     }
 
     /// Просим редактор открыть папку: он поднимает окно, где она уже открыта,
@@ -93,7 +107,9 @@ enum WindowSwitcher {
             return false
         }
         if !stderr.isEmpty { Log.write("open: \(stderr.prefix(120))") }
-        Log.write("перешёл к \(project) в \(ide)")
+        // Папку пишем всегда: если проект вложенный, открывали не его, а корень,
+        // и без этого непонятно, почему подняли соседнее на вид окно.
+        Log.write("перешёл к \(project) в \(ide) · папка \(path)")
         return true
     }
 
