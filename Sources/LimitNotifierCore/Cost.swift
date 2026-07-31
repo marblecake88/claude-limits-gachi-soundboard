@@ -180,6 +180,34 @@ public enum CostScanner {
         isoParser.date(from: s) ?? isoPlain.date(from: s)
     }
 
+    /// То же построчное чтение, но с продолжением: начинаем с offset и
+    /// возвращаем, докуда дочитали.
+    ///
+    /// Возвращаем позицию последнего полного перевода строки, а хвост без него
+    /// не отдаём и в счёт не берём: файл могут дописывать прямо сейчас, и
+    /// половина строки это не запись, а огрызок. В следующий раз он дочитается
+    /// целиком.
+    public static func forEachLine(of url: URL, from offset: UInt64,
+                                   _ body: (String) -> Void) -> UInt64 {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return offset }
+        defer { try? handle.close() }
+        do { try handle.seek(toOffset: offset) } catch { return offset }
+
+        var consumed = offset
+        var buffer = Data()
+        let newline = UInt8(ascii: "\n")
+        while let chunk = try? handle.read(upToCount: 1 << 20), !chunk.isEmpty {
+            buffer.append(chunk)
+            while let idx = buffer.firstIndex(of: newline) {
+                let line = buffer[buffer.startIndex..<idx]
+                consumed += UInt64(buffer.distance(from: buffer.startIndex, to: idx) + 1)
+                buffer.removeSubrange(buffer.startIndex...idx)
+                if let text = String(data: line, encoding: .utf8) { body(text) }
+            }
+        }
+        return consumed
+    }
+
     /// Построчное чтение кусками по мегабайту: файлы бывают на десятки
     /// мегабайт, целиком в память их тянуть не надо.
     static func forEachLine(of url: URL, _ body: (String) -> Void) {

@@ -55,7 +55,10 @@ struct StatsPane: View {
             }
             .buttonStyle(.plain)
             .disabled(model.statsScanning)
-            .help(L.s("пересчитать", "recount"))
+            // Обычное обновление идёт само и дочитывает только новое, поэтому
+            // кнопка это именно полный пересчёт, и он не мгновенный.
+            .help(L.s("перечитать всё заново, это небыстро",
+                      "recount everything from scratch, takes a while"))
             Spacer(minLength: 8)
             ForEach(StatsPeriod.allCases, id: \.self) { period in
                 Button(action: { model.setStatsPeriod(period) }) {

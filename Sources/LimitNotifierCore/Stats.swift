@@ -42,7 +42,7 @@ public struct UsageStats: Sendable, Equatable {
     public let currentStreak: Int
     public let scannedAt: Date
 
-    public struct DayTotals: Sendable, Equatable {
+    public struct DayTotals: Sendable, Equatable, Codable {
         public var cost: [String: Double]
         public var tokens: Int
 
@@ -237,12 +237,15 @@ public enum StatsScanner {
     ///
     /// Формат кэша недокументированный, поэтому на любой неожиданности молча
     /// откатываемся на полный скан: он медленный, но работает всегда.
+    /// Возвращает и статистику, и траты: считаются они из одного и того же
+    /// накопленного прохода, и второй раз читать диск ради денег незачем.
     public static func load(cache: URL? = nil, root: URL = CostScanner.defaultRoot,
-                            now: Date = Date(), calendar: Calendar = .current) -> UsageStats {
-        guard let cached = readCache(cache ?? defaultCache, now: now, calendar: calendar) else {
-            return scan(root: root, now: now, calendar: calendar)
-        }
-        // Окно свежего скана считаем от последнего посчитанного дня, а не берём
+                            now: Date = Date(), calendar: Calendar = .current,
+                            state stateURL: URL = ScanState.defaultURL,
+                            rebuild: Bool = false) -> (stats: UsageStats, spend: Spend) {
+        let cached = readCache(cache ?? defaultCache, now: now, calendar: calendar)
+
+        // Окно чтения считаем от последнего посчитанного кэшем дня, а не берём
         // фиксированные сутки-двое.
         //
         // Раньше тут стояло два дня, исходя из того, что кэш пересчитывается
@@ -251,11 +254,17 @@ public enum StatsScanner {
         // неделю, и всё это время недостающие дни просто не попадали в цифры.
         //
         // Сутки назад с запасом: файл могли дописать после того, как кэш его
-        // посчитал, а лишний день скана дешевле пропущенного.
-        let since = cached.cacheUpTo.flatMap(StatsSlicer.isoDate)?.addingTimeInterval(-86400)
-        let fresh = scan(root: root, now: now, calendar: calendar,
-                         changedSince: since ?? now.addingTimeInterval(-2 * 86400))
-        return merge(cached, fresh: fresh, now: now, calendar: calendar)
+        // посчитал, а лишний день чтения дешевле пропущенного.
+        let since = cached?.cacheUpTo.flatMap(StatsSlicer.isoDate)?.addingTimeInterval(-86400)
+
+        var state = rebuild ? ScanState() : (ScanState.read(stateURL) ?? ScanState())
+        state.advance(root: root, since: since, now: now, calendar: calendar)
+        state.write(to: stateURL)
+
+        let fresh = state.stats(now: now, calendar: calendar)
+        let spend = state.spend(now: now, calendar: calendar)
+        guard let cached else { return (fresh, spend) }
+        return (merge(cached, fresh: fresh, now: now, calendar: calendar), spend)
     }
 
     /// Разбор ~/.claude/stats-cache.json. nil, если файла нет или формат чужой.
@@ -345,9 +354,14 @@ public enum StatsScanner {
             for (model, money) in totals.cost { cost[model, default: 0] += money }
         }
 
+        // Сессии берём у claude, а не свои. Свой счёт это файлы транскриптов, а
+        // у каждого субагента файл собственный, и число раздувается втрое: 211
+        // против 79 на моей машине. Показываем то же, что показывает claude.
+        let sessions = cached.transcripts > 0 ? cached.transcripts : fresh.transcripts
+
         let (best, current) = streaks(days.keys.sorted(), now: now, calendar: calendar)
         return UsageStats(days: days, hours: fresh.hours, requests: requests,
-                          transcripts: max(cached.transcripts, fresh.transcripts),
+                          transcripts: sessions,
                           bestStreak: best, currentStreak: current, scannedAt: now,
                           lifetimeTokens: lifetime, cacheUpTo: cached.cacheUpTo,
                           lifetimeCost: cost, totalsByDay: fresh.totalsByDay)

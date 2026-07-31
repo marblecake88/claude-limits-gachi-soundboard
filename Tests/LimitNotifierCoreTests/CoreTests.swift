@@ -1234,6 +1234,26 @@ struct LifetimeTokensTests {
         #expect(merged.lifetimeCostTotal == 8150)
     }
 
+    /// Регресс: свой счёт транскриптов раздут субагентами, у каждого файл свой.
+    /// На живых данных выходило 211 против 79 у claude.
+    @Test("Сессии показываем те же, что claude")
+    func sessionsComeFromCache() {
+        let now = StatsSlicer.isoDate("2026-07-31")!
+        let cached = UsageStats(days: [:], hours: [:], requests: [:], transcripts: 79,
+                                bestStreak: 0, currentStreak: 0, scannedAt: now,
+                                cacheUpTo: "2026-07-23")
+        let fresh = UsageStats(days: [:], hours: [:], requests: [:], transcripts: 211,
+                               bestStreak: 0, currentStreak: 0, scannedAt: now)
+        #expect(StatsScanner.merge(cached, fresh: fresh, now: now, calendar: cal())
+                    .transcripts == 79)
+
+        // Кэша нет, значит показывать нечего кроме своего счёта.
+        let empty = UsageStats(days: [:], hours: [:], requests: [:], transcripts: 0,
+                               bestStreak: 0, currentStreak: 0, scannedAt: now, cacheUpTo: nil)
+        #expect(StatsScanner.merge(empty, fresh: fresh, now: now, calendar: cal())
+                    .transcripts == 211)
+    }
+
     /// Без кэша считаем всё сами, и деньги в том числе: иначе запасной путь
     /// показывал бы нули.
     @Test("Полный скан сам считает итоги за всё время")
@@ -1500,6 +1520,186 @@ struct ReadyLogTests {
 }
 
 // MARK: - Установка хука в чужой файл настроек
+
+@Suite("Дочитывание транскриптов")
+struct ScanStateTests {
+
+    private func cal() -> Calendar {
+        var c = Calendar(identifier: .gregorian)
+        c.timeZone = TimeZone(secondsFromGMT: 3 * 3600)!
+        return c
+    }
+
+    /// Одна строка транскрипта: столько-то токенов в такой-то день.
+    private func line(day: String, tokens: Int, cacheRead: Int = 0) -> String {
+        """
+        {"timestamp":"\(day)T12:00:00.000Z","message":{"model":"claude-opus-4-8",\
+        "usage":{"input_tokens":\(tokens),"output_tokens":0,\
+        "cache_read_input_tokens":\(cacheRead),"cache_creation_input_tokens":0}}}
+        """
+    }
+
+    private func makeRoot() throws -> URL {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("scan-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        return root
+    }
+
+    /// Главное свойство: дописали файл, прочли только дописанное, а посчиталось
+    /// всё. Ради этого всё и затевалось, иначе каждое обновление перечитывает
+    /// сотни мегабайт.
+    @Test("Дописанное дочитывается, прежнее не считается заново")
+    func appendReadsOnlyTail() throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("a.jsonl")
+        let now = StatsSlicer.isoDate("2026-07-31")!
+
+        try (line(day: "2026-07-30", tokens: 100) + "\n").write(to: file, atomically: true,
+                                                                encoding: .utf8)
+        var state = ScanState()
+        state.advance(root: root, now: now, calendar: cal())
+        #expect(state.days["2026-07-30"]?["Opus 4.8"] == 100)
+        let after = state.offsets["a.jsonl"]
+
+        // Дописываем вторую строку и просим дочитать.
+        let handle = try FileHandle(forWritingTo: file)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data((line(day: "2026-07-30", tokens: 7) + "\n").utf8))
+        try handle.close()
+
+        state.advance(root: root, now: now, calendar: cal())
+        #expect(state.days["2026-07-30"]?["Opus 4.8"] == 107)      // сложилось, а не удвоилось
+        #expect((state.offsets["a.jsonl"] ?? 0) > (after ?? 0))     // позиция сдвинулась
+    }
+
+    /// Повторный проход без изменений не должен ничего менять: это и есть
+    /// защита от двойного счёта.
+    @Test("Проход по неизменившемуся файлу ничего не добавляет")
+    func idempotent() throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try (line(day: "2026-07-30", tokens: 50) + "\n")
+            .write(to: root.appendingPathComponent("a.jsonl"), atomically: true, encoding: .utf8)
+        let now = StatsSlicer.isoDate("2026-07-31")!
+
+        var state = ScanState()
+        state.advance(root: root, now: now, calendar: cal())
+        state.advance(root: root, now: now, calendar: cal())
+        state.advance(root: root, now: now, calendar: cal())
+        #expect(state.days["2026-07-30"]?["Opus 4.8"] == 50)
+        #expect(state.files == 1)
+    }
+
+    /// Недописанная строка в счёт не идёт: файл могут дописывать прямо сейчас.
+    /// В следующий раз она прочитается целиком.
+    @Test("Обрывок строки ждёт своего перевода строки")
+    func partialLineWaits() throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("a.jsonl")
+        let full = line(day: "2026-07-30", tokens: 100)
+        let now = StatsSlicer.isoDate("2026-07-31")!
+
+        // Половина строки, без перевода строки в конце.
+        try String(full.prefix(full.count / 2)).write(to: file, atomically: true, encoding: .utf8)
+        var state = ScanState()
+        state.advance(root: root, now: now, calendar: cal())
+        #expect(state.days.isEmpty)
+        #expect(state.offsets["a.jsonl"] == 0)
+
+        try (full + "\n").write(to: file, atomically: true, encoding: .utf8)
+        state.advance(root: root, now: now, calendar: cal())
+        #expect(state.days["2026-07-30"]?["Opus 4.8"] == 100)
+    }
+
+    /// Файл стал короче, значит его переписали, и накопленному по нему верить
+    /// нельзя. Считаем всё заново.
+    @Test("Подрезанный файл заставляет пересчитать всё")
+    func truncationRebuilds() throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("a.jsonl")
+        let now = StatsSlicer.isoDate("2026-07-31")!
+
+        var text = ""
+        for _ in 0..<5 { text += line(day: "2026-07-30", tokens: 100) + "\n" }
+        try text.write(to: file, atomically: true, encoding: .utf8)
+        var state = ScanState()
+        state.advance(root: root, now: now, calendar: cal())
+        #expect(state.days["2026-07-30"]?["Opus 4.8"] == 500)
+
+        try (line(day: "2026-07-30", tokens: 100) + "\n").write(to: file, atomically: true,
+                                                                encoding: .utf8)
+        state.advance(root: root, now: now, calendar: cal())
+        #expect(state.days["2026-07-30"]?["Opus 4.8"] == 100)   // а не 600
+    }
+
+    /// Удалённый транскрипт остаётся посчитанным: claude подчищает старые
+    /// файлы, и терять вместе с ними историю нельзя.
+    @Test("Удаление файла не стирает уже посчитанное")
+    func deletedFileKeepsItsNumbers() throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("a.jsonl")
+        let now = StatsSlicer.isoDate("2026-07-31")!
+
+        try (line(day: "2026-07-30", tokens: 100) + "\n").write(to: file, atomically: true,
+                                                                encoding: .utf8)
+        var state = ScanState()
+        state.advance(root: root, now: now, calendar: cal())
+        try FileManager.default.removeItem(at: file)
+        state.advance(root: root, now: now, calendar: cal())
+
+        #expect(state.days["2026-07-30"]?["Opus 4.8"] == 100)
+        #expect(state.offsets.isEmpty)   // позиция ушла вместе с файлом
+    }
+
+    @Test("Деньги за сегодня и за неделю из накопленных дней")
+    func spendFromTotals() {
+        let now = StatsSlicer.isoDate("2026-07-31")!
+        var state = ScanState()
+        state.totals["2026-07-31"] = .init(cost: ["Opus 4.8": 10, "Opus 5": 5], tokens: 1)
+        state.totals["2026-07-28"] = .init(cost: ["Opus 4.8": 100], tokens: 1)
+        state.totals["2026-07-01"] = .init(cost: ["Opus 4.8": 999], tokens: 1)   // вне недели
+
+        let spend = state.spend(now: now, calendar: cal())
+        #expect(spend.today == 15)
+        #expect(spend.week == 115)
+    }
+
+    @Test("Часы отдаются только сегодняшние")
+    func hoursAreTodayOnly() {
+        let now = StatsSlicer.isoDate("2026-07-31")!
+        var state = ScanState()
+        state.hours["2026-07-31 14"] = ["Opus 4.8": 10]
+        state.hours["2026-07-30 14"] = ["Opus 4.8": 99]
+        let stats = state.stats(now: now, calendar: cal())
+        #expect(stats.hours["14"]?["Opus 4.8"] == 10)
+        #expect(stats.hours.count == 1)
+    }
+
+    @Test("Состояние переживает запись и чтение")
+    func roundTrip() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("state-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        var state = ScanState()
+        state.offsets["/a.jsonl"] = 42
+        state.days["2026-07-30"] = ["Opus 4.8": 7]
+        state.totals["2026-07-30"] = .init(cost: ["Opus 4.8": 1.5], tokens: 9)
+        state.files = 1
+        state.write(to: url)
+
+        let back = try #require(ScanState.read(url))
+        #expect(back.offsets["/a.jsonl"] == 42)
+        #expect(back.days["2026-07-30"]?["Opus 4.8"] == 7)
+        #expect(back.totals["2026-07-30"]?.tokens == 9)
+        #expect(back.files == 1)
+    }
+}
 
 @Suite("Папка проекта и вложенность")
 struct ProjectPathTests {

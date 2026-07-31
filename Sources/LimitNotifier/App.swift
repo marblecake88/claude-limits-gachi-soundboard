@@ -628,7 +628,7 @@ final class AppModel: ObservableObject {
     private var lastWakeSpec = ""
 
     @Published private(set) var spend = Spend.empty
-    private var scanning = false
+    private var statsTask: Task<Void, Never>?
 
     // MARK: - Статистика
 
@@ -639,13 +639,20 @@ final class AppModel: ObservableObject {
 
     func toggleStats() {
         statsOpen.toggle()
+        // Открыли: показываем то, что уже посчитано, и тут же дочитываем свежее.
+        // Дочитывание дешёвое, поэтому пока панель открыта, обновляем часто:
+        // сегодняшний день идёт в прямом эфире.
         if statsOpen { rescanStats() }
     }
 
     func setStatsPeriod(_ period: StatsPeriod) { statsPeriod = period }
 
-    /// Кнопка пересчёта в панели статистики: считаем сразу, без выдержки.
-    func refreshStats() { rescanStats(force: true) }
+    /// Кнопка пересчёта в панели статистики: перечитываем всё с нуля.
+    ///
+    /// Обычное обновление дочитывает только дописанное, а кнопка нужна ровно на
+    /// случай, когда накопленному не веришь. Она честно перечитывает транскрипты
+    /// целиком, поэтому и медленная.
+    func refreshStats() { rescanStats(force: true, rebuild: true) }
 
     /// Переключение языка на лету. Строки собираются при отрисовке, поэтому
     /// достаточно дёрнуть перерисовку, а вот уже посчитанный текст следующего
@@ -658,46 +665,40 @@ final class AppModel: ObservableObject {
         rescheduleKeepAlive()
     }
 
-    /// Полный проход по транскриптам заметно дороже скана трат: тот берёт
-    /// только неделю, а этому нужна вся история. Поэтому считаем лениво, при
-    /// открытии статистики, и не чаще раза в 10 минут.
-    private func rescanStats(force: Bool = false) {
+    /// Дочитывает транскрипты и обновляет статистику вместе с тратами.
+    ///
+    /// Считается всё из одного накопленного прохода: раньше их было два, и
+    /// каждый заново перечитывал одни и те же сотни мегабайт.
+    ///
+    /// Выдержка разная по месту: при открытой панели полминуты, чтобы сегодняшний
+    /// день шёл живьём, в остальное время десять минут. Полный пересчёт только
+    /// по кнопке.
+    private func rescanStats(force: Bool = false, rebuild: Bool = false) {
         guard !statsScanning else { return }
-        guard force || Date().timeIntervalSince(stats.scannedAt) > 600 else { return }
+        let idle: TimeInterval = statsOpen ? 30 : 600
+        guard force || Date().timeIntervalSince(stats.scannedAt) > idle else { return }
         statsScanning = true
         Task.detached(priority: .utility) {
             let started = Date()
-            let result = StatsScanner.load()
+            let result = StatsScanner.load(rebuild: rebuild)
             let ms = Int(Date().timeIntervalSince(started) * 1000)
             await MainActor.run { [weak self] in
                 guard let self else { return }
-                self.stats = result
+                self.stats = result.stats
+                self.spend = result.spend
                 self.statsScanning = false
-                Log.write("stats: \(result.activeDays) дней, \(result.transcripts) сессий, \(ms)ms")
-            }
-        }
-    }
-
-    /// Скан транскриптов на фоне. Не чаще раза в 5 минут: он читает диск, а
-    /// цифра за сутки от лишней точности не выигрывает.
-    func rescanSpend(force: Bool = false) {
-        guard !scanning else { return }
-        guard force || Date().timeIntervalSince(spend.scannedAt) > 300 else { return }
-        scanning = true
-        Task.detached(priority: .utility) {
-            let started = Date()
-            let result = CostScanner.scan()
-            let ms = Int(Date().timeIntervalSince(started) * 1000)
-            await MainActor.run { [weak self] in
-                guard let self else { return }
-                self.spend = result
-                self.scanning = false
-                var line = String(format: "cost scan: today $%.2f, week $%.2f, %dms",
-                                  result.today, result.week, ms)
-                if !result.unknownModels.isEmpty {
-                    line += ", без цены: " + result.unknownModels.joined(separator: " ")
+                // Долгие проходы это либо первый запуск, либо кнопка. Короткие
+                // повторяются часто, и засорять ими лог незачем.
+                if ms > 1000 || rebuild {
+                    var line = String(format: "stats: %d дней, %d сессий, за всё $%.0f, %dms",
+                                      result.stats.activeDays, result.stats.transcripts,
+                                      result.stats.lifetimeCostTotal, ms)
+                    if rebuild { line += ", полный пересчёт" }
+                    if !result.spend.unknownModels.isEmpty {
+                        line += ", без цены: " + result.spend.unknownModels.joined(separator: " ")
+                    }
+                    Log.write(line)
                 }
-                Log.write(line)
             }
         }
     }
@@ -726,9 +727,19 @@ final class AppModel: ObservableObject {
                   + " · язык \(L.lang == .ru ? "ru" : "en")")
         startPolling()
         rescheduleKeepAlive()
-        rescanSpend(force: true)
         refreshWakeState()
         watchReady()
+
+        // Статистику считаем сразу на старте и дальше сами по себе, чтобы к
+        // моменту, когда её откроют, цифры уже лежали готовые. Первый проход
+        // после установки долгий, дальше дочитывание.
+        statsTask = Task { [weak self] in
+            while !Task.isCancelled {
+                self?.rescanStats()
+                // При открытой панели тик частый: сегодняшний день живой.
+                try? await Task.sleep(for: .seconds(self?.statsOpen == true ? 30 : 300))
+            }
+        }
 
         tickTask = Task { [weak self] in
             while !Task.isCancelled {
@@ -781,12 +792,9 @@ final class AppModel: ObservableObject {
     func refresh(force: Bool = false) {
         // Панель открывают часто, а за минуту цифры почти не меняются.
         // Запрос на каждое открытие это прямой путь в 429.
-        if !force, let at = snapshot?.fetchedAt, Date().timeIntervalSince(at) < 60 {
-            rescanSpend()
-            return
-        }
+        rescanStats()
+        if !force, let at = snapshot?.fetchedAt, Date().timeIntervalSince(at) < 60 { return }
         Task { await fetchOnce() }
-        rescanSpend()
     }
 
     private func fetchOnce() async {

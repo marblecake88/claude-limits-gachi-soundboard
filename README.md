@@ -1,6 +1,6 @@
 # claude limits gachi soundboard
 
-[![release](https://img.shields.io/badge/release-v1.9.3-ff598c)](https://github.com/marblecake88/claude-limits-gachi-soundboard/releases)
+[![release](https://img.shields.io/badge/release-v1.9.4-ff598c)](https://github.com/marblecake88/claude-limits-gachi-soundboard/releases)
 [![downloads](https://img.shields.io/github/downloads/marblecake88/claude-limits-gachi-soundboard/total)](https://github.com/marblecake88/claude-limits-gachi-soundboard/releases)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 ![macos](https://img.shields.io/badge/macos-14%2B-black)
@@ -41,7 +41,9 @@
 **Статистика.** Жмёшь STATS, и панель разъезжается вправо: токены по дням, часам или
 неделям, карта активности за всё время, доли моделей, стрики. Плюс деньги по тарифам API,
 за сегодня, за неделю и за всё время, с разбивкой по моделям. Считается локально из
-транскриптов и кэша claude, цифры сходятся с его собственной вкладкой Stats.
+транскриптов и кэша claude, цифры сходятся с его собственной вкладкой Stats. Транскрипты
+дочитываются с того места, где остановились в прошлый раз, поэтому панель открывается сразу
+с готовыми цифрами, а сегодняшний день обновляется на глазах, пока она открыта.
 
 **Гачи-саундборд.** Тридцать звуков. Жмёшь кошку, играет случайный, или тыкаешь конкретный
 на сетке. Ради этого всё и затевалось.
@@ -152,7 +154,9 @@ If your mac sleeps, the app hands you the command for a wake timer.
 **Statistics.** Hit STATS and the panel expands to the right: tokens per day, hour or week,
 an activity map for all time, model shares, streaks. Plus spend at API rates for today, the
 week and all time, broken down by model. Computed locally from transcripts and claude's own
-cache, and the numbers match its Stats tab.
+cache, and the numbers match its Stats tab. Transcripts are read from where the last pass
+stopped, so the pane opens with the numbers already there, and today keeps updating while you
+watch it.
 
 **Gachi soundboard.** Thirty sounds. Click the cat for a random one, or tap a specific one
 on the grid. This is what the whole thing was built for.
