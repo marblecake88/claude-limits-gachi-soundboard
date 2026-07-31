@@ -35,18 +35,33 @@ public struct UsageStats: Sendable, Equatable {
     /// токенами. Это важно: чтение кэша стоит десятую часть входа, но его в
     /// сотни раз больше, и без него сумма занижена в разы.
     public let lifetimeCost: [String: Double]
+    /// Полные итоги дня из транскриптов: деньги по моделям и объём с кэшевыми
+    /// токенами. Нужны, чтобы досчитать дни, до которых кэш claude ещё не дошёл.
+    public let totalsByDay: [String: DayTotals]
     public let bestStreak: Int
     public let currentStreak: Int
     public let scannedAt: Date
+
+    public struct DayTotals: Sendable, Equatable {
+        public var cost: [String: Double]
+        public var tokens: Int
+
+        public init(cost: [String: Double] = [:], tokens: Int = 0) {
+            self.cost = cost
+            self.tokens = tokens
+        }
+    }
 
     public init(days: [String: [String: Int]], hours: [String: [String: Int]],
                 requests: [String: Int], transcripts: Int,
                 bestStreak: Int, currentStreak: Int, scannedAt: Date,
                 lifetimeTokens: Int = 0, cacheUpTo: String? = nil,
-                lifetimeCost: [String: Double] = [:]) {
+                lifetimeCost: [String: Double] = [:],
+                totalsByDay: [String: DayTotals] = [:]) {
         self.lifetimeTokens = lifetimeTokens
         self.cacheUpTo = cacheUpTo
         self.lifetimeCost = lifetimeCost
+        self.totalsByDay = totalsByDay
         self.days = days
         self.hours = hours
         self.requests = requests
@@ -227,10 +242,19 @@ public enum StatsScanner {
         guard let cached = readCache(cache ?? defaultCache, now: now, calendar: calendar) else {
             return scan(root: root, now: now, calendar: calendar)
         }
-        // Кэш пересчитывается раз в сутки, сегодняшнего дня в нём обычно нет.
-        // Дочитываем только свежие файлы, это быстро.
+        // Окно свежего скана считаем от последнего посчитанного дня, а не берём
+        // фиксированные сутки-двое.
+        //
+        // Раньше тут стояло два дня, исходя из того, что кэш пересчитывается
+        // ежедневно. Это неверно: claude обновляет его, когда сам считает свою
+        // статистику, то есть когда человек туда заглядывает. У меня он простоял
+        // неделю, и всё это время недостающие дни просто не попадали в цифры.
+        //
+        // Сутки назад с запасом: файл могли дописать после того, как кэш его
+        // посчитал, а лишний день скана дешевле пропущенного.
+        let since = cached.cacheUpTo.flatMap(StatsSlicer.isoDate)?.addingTimeInterval(-86400)
         let fresh = scan(root: root, now: now, calendar: calendar,
-                         changedSince: now.addingTimeInterval(-2 * 86400))
+                         changedSince: since ?? now.addingTimeInterval(-2 * 86400))
         return merge(cached, fresh: fresh, now: now, calendar: calendar)
     }
 
@@ -306,12 +330,27 @@ public enum StatsScanner {
             days[day] = parts
             if let count = fresh.requests[day] { requests[day] = count }
         }
+
+        // Итоги за всё время тоже дочитываем, а не берём из кэша как есть.
+        // Кэш claude пересчитывает не по расписанию, а когда сам считает свою
+        // статистику: у меня он простоял неделю, и всё это время "за всё время"
+        // показывало одну и ту же сумму, хотя за ту неделю натикало ещё треть.
+        var lifetime = cached.lifetimeTokens
+        var cost = cached.lifetimeCost
+        for (day, totals) in fresh.totalsByDay {
+            // Строго после посчитанного дня: сам этот день уже сидит в итогах
+            // кэша, и сложив его ещё раз, мы бы его удвоили.
+            if let upTo = cached.cacheUpTo, day <= upTo { continue }
+            lifetime += totals.tokens
+            for (model, money) in totals.cost { cost[model, default: 0] += money }
+        }
+
         let (best, current) = streaks(days.keys.sorted(), now: now, calendar: calendar)
         return UsageStats(days: days, hours: fresh.hours, requests: requests,
                           transcripts: max(cached.transcripts, fresh.transcripts),
                           bestStreak: best, currentStreak: current, scannedAt: now,
-                          lifetimeTokens: cached.lifetimeTokens, cacheUpTo: cached.cacheUpTo,
-                          lifetimeCost: cached.lifetimeCost)
+                          lifetimeTokens: lifetime, cacheUpTo: cached.cacheUpTo,
+                          lifetimeCost: cost, totalsByDay: fresh.totalsByDay)
     }
 
     /// Проход по транскриптам. Запасной путь и источник сегодняшних часов.
@@ -322,6 +361,7 @@ public enum StatsScanner {
         var days: [String: [String: Int]] = [:]
         var hours: [String: [String: Int]] = [:]
         var requests: [String: Int] = [:]
+        var totals: [String: UsageStats.DayTotals] = [:]
         var transcripts = 0
 
         let today = StatsScanner.dayKey(now, calendar: calendar)
@@ -361,6 +401,18 @@ public enum StatsScanner {
                 let day = dayKey(at, calendar: calendar)
                 days[day, default: [:]][short, default: 0] += tokens
                 requests[day, default: 0] += 1
+
+                // Отдельно полный счёт: с кэшевыми токенами и в деньгах. График
+                // считает как claude, без кэша, а вот "за всё время" и траты
+                // без кэша занижены в разы, там его 99% объёма.
+                var day2 = totals[day] ?? UsageStats.DayTotals()
+                day2.tokens += tokens
+                    + CostScanner.int(usage["cache_read_input_tokens"])
+                    + CostScanner.int(usage["cache_creation_input_tokens"])
+                if let prices = Pricing.forModel(model) {
+                    day2.cost[short, default: 0] += CostScanner.price(usage: usage, prices: prices)
+                }
+                totals[day] = day2
                 if day == today {
                     hours[hourKey(at, calendar: calendar), default: [:]][short, default: 0] += tokens
                 }
@@ -369,9 +421,19 @@ public enum StatsScanner {
             if used { transcripts += 1 }
         }
 
+        // Без кэша claude это единственный источник, поэтому итоги за всё время
+        // тут же и считаем: иначе полный скан показывал бы нули в деньгах.
+        var lifetime = 0
+        var cost: [String: Double] = [:]
+        for totals in totals.values {
+            lifetime += totals.tokens
+            for (model, money) in totals.cost { cost[model, default: 0] += money }
+        }
+
         let (best, current) = streaks(days.keys.sorted(), now: now, calendar: calendar)
         return UsageStats(days: days, hours: hours, requests: requests, transcripts: transcripts,
-                          bestStreak: best, currentStreak: current, scannedAt: now)
+                          bestStreak: best, currentStreak: current, scannedAt: now,
+                          lifetimeTokens: lifetime, lifetimeCost: cost, totalsByDay: totals)
     }
 
     /// Подряд идущие активные дни. Текущий стрик обнуляем, если последний

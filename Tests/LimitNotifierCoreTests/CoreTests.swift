@@ -1203,6 +1203,54 @@ struct LifetimeTokensTests {
         #expect(merged.currentStreak == 2)
     }
 
+    /// Регресс: "за всё время" неделю показывало одну и ту же сумму.
+    ///
+    /// Кэш claude пересчитывается не по расписанию, а когда он сам считает свою
+    /// статистику. Пока человек туда не заходит, кэш стоит, и итоги за всё время
+    /// брались из него как есть. На живых данных за неделю простоя потерялось
+    /// 3400 долларов и четыре миллиарда токенов.
+    @Test("Дни после кэша досчитываются в итоги за всё время")
+    func tailAddsToLifetime() {
+        let now = StatsSlicer.isoDate("2026-07-31")!
+        let cached = UsageStats(days: ["2026-07-23": ["Opus 4.8": 5_000_000]],
+                                hours: [:], requests: [:], transcripts: 44,
+                                bestStreak: 1, currentStreak: 1, scannedAt: now,
+                                lifetimeTokens: 8_000_000_000, cacheUpTo: "2026-07-23",
+                                lifetimeCost: ["Opus 4.8": 8000])
+        let fresh = UsageStats(
+            days: ["2026-07-24": ["Opus 5": 300_000]],
+            hours: [:], requests: [:], transcripts: 3,
+            bestStreak: 1, currentStreak: 1, scannedAt: now,
+            totalsByDay: [
+                // День, который кэш уже посчитал: брать нельзя, удвоится.
+                "2026-07-23": .init(cost: ["Opus 4.8": 999], tokens: 777_000_000),
+                "2026-07-24": .init(cost: ["Opus 5": 100, "Opus 4.8": 50], tokens: 2_000_000_000),
+            ])
+        let merged = StatsScanner.merge(cached, fresh: fresh, now: now, calendar: cal())
+
+        #expect(merged.lifetimeTokens == 8_000_000_000 + 2_000_000_000)
+        #expect(merged.lifetimeCost["Opus 4.8"] == 8050)   // 8000 из кэша плюс 50 за хвост
+        #expect(merged.lifetimeCost["Opus 5"] == 100)      // модели, которой в кэше не было
+        #expect(merged.lifetimeCostTotal == 8150)
+    }
+
+    /// Без кэша считаем всё сами, и деньги в том числе: иначе запасной путь
+    /// показывал бы нули.
+    @Test("Полный скан сам считает итоги за всё время")
+    func scanFillsLifetime() {
+        let now = StatsSlicer.isoDate("2026-07-31")!
+        let cached = UsageStats(days: [:], hours: [:], requests: [:], transcripts: 0,
+                                bestStreak: 0, currentStreak: 0, scannedAt: now,
+                                cacheUpTo: nil)
+        let fresh = UsageStats(days: ["2026-07-30": ["Opus 5": 10]],
+                               hours: [:], requests: [:], transcripts: 1,
+                               bestStreak: 1, currentStreak: 1, scannedAt: now,
+                               totalsByDay: ["2026-07-30": .init(cost: ["Opus 5": 12], tokens: 90)])
+        let merged = StatsScanner.merge(cached, fresh: fresh, now: now, calendar: cal())
+        #expect(merged.lifetimeTokens == 90)
+        #expect(merged.lifetimeCostTotal == 12)
+    }
+
     @Test("Без даты в кэше свежие данные применяются ко всем дням")
     func noCacheDateMergesAll() {
         let now = StatsSlicer.isoDate("2026-07-24")!
