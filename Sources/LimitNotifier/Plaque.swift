@@ -69,17 +69,27 @@ final class Plaque {
         panel.setFrame(frame, display: true)
     }
 
-    /// Ставит плашку туда, где её оставили. Границы проверяем каждый раз: экран
-    /// мог отвалиться или сменить разрешение, и сохранённая точка оказаться вне его.
+    /// Ставит плашку туда, где её оставили.
+    ///
+    /// Экран выбираем по самой сохранённой точке, а не берём главный: на двух
+    /// мониторах плашку часто уносят на второй, и привязка к главному тащила бы
+    /// её обратно при каждом показе. Границы всё равно проверяем: монитор мог
+    /// отвалиться или сменить разрешение, и точка оказаться в пустоте.
     private func place() {
-        guard let screen = NSScreen.main else { return }
-        let visible = screen.visibleFrame
         let size = panel.frame.size
         let saved = settings.plaqueOrigin
+        let middle = saved.map { CGPoint(x: $0.x + size.width / 2, y: $0.y + size.height / 2) }
+        let screen = middle.flatMap { point in
+            NSScreen.screens.first { $0.frame.contains(point) }
+        } ?? NSScreen.main
+        guard let screen else { return }
+
+        let visible = screen.visibleFrame
+        let wanted = saved
             ?? CGPoint(x: visible.maxX - size.width - 12, y: visible.maxY - size.height - 6)
         panel.setFrameOrigin(NSPoint(
-            x: min(max(saved.x, visible.minX), visible.maxX - size.width),
-            y: min(max(saved.y, visible.minY), visible.maxY - size.height)))
+            x: min(max(wanted.x, visible.minX), visible.maxX - size.width),
+            y: min(max(wanted.y, visible.minY), visible.maxY - size.height)))
     }
 
     private func savePosition() {

@@ -739,13 +739,18 @@ final class AppModel: ObservableObject {
         // билд и состояние того, что включается руками.
         let info = Bundle.main.infoDictionary
         let build = info?["BuildSHA"] as? String ?? "?"
+        // Раскладку мониторов пишем сразу: разбор чужих логов упирался ровно в
+        // то, что про их экраны ничего не известно.
+        let screens = NSScreen.screens.map {
+            "\(Int($0.frame.width))x\(Int($0.frame.height))@\(Int($0.frame.minX)),\(Int($0.frame.minY))"
+        }.joined(separator: " ")
         Log.write("app started · v\(currentVersion) \(build)"
                   + " · уведомления \(HookInstaller.isInstalled ? "вкл" : "выкл")"
                   + " · accessibility \(FocusProbe.isTrusted ? "есть" : "нет")"
                   + " · keep-alive \(settings.keepAliveEnabled ? "вкл" : "выкл")"
                   + " · язык \(L.lang == .ru ? "ru" : "en")"
                   + " · macos \(ProcessInfo.processInfo.operatingSystemVersionString)"
-                  + " · экранов \(NSScreen.screens.count)")
+                  + " · экраны \(screens)")
         startPolling()
         rescheduleKeepAlive()
         refreshWakeState()
