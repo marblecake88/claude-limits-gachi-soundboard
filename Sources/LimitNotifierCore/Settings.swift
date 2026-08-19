@@ -20,6 +20,7 @@ public final class Settings: ObservableObject {
         static let visitedLimits = "visitedLimits"
         static let language = "language"
         static let plaqueAlways = "plaqueAlways"
+        static let plaqueMode = "plaqueMode"
         static let plaqueX = "plaqueX"
         static let plaqueY = "plaqueY"
     }
@@ -72,11 +73,18 @@ public final class Settings: ObservableObject {
         set { defaults.set(newValue, forKey: Keys.visitedLimits); bump() }
     }
 
-    /// Держать плавающую плашку всегда. Выключено значит "только когда нас
-    /// вытеснили из строки меню": тогда она появляется сама и сама уходит.
-    public var plaqueAlways: Bool {
-        get { defaults.bool(forKey: Keys.plaqueAlways) }
-        set { defaults.set(newValue, forKey: Keys.plaqueAlways); bump() }
+    /// Режим плавающей плашки. По умолчанию авто: появляется, когда нас
+    /// вытеснили из строки меню, и уходит, когда место вернулось.
+    ///
+    /// Прежний тумблер "всегда" переносим как есть: у кого он был включён, тот
+    /// и получит always, остальные авто.
+    public var plaqueMode: PlaqueMode {
+        get {
+            if let raw = defaults.string(forKey: Keys.plaqueMode),
+               let mode = PlaqueMode(rawValue: raw) { return mode }
+            return defaults.bool(forKey: Keys.plaqueAlways) ? .always : .auto
+        }
+        set { defaults.set(newValue.rawValue, forKey: Keys.plaqueMode); bump() }
     }
 
     /// Куда её перетащили. nil, пока не двигали: тогда встаёт в правый верхний

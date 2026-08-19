@@ -7,6 +7,7 @@ import LimitNotifierCore
 /// лимитов при этом не меняется ни на пиксель, попап разъезжается вширь.
 struct StatsPane: View {
     @ObservedObject var model: AppModel
+    @State private var machinesOpen = false
 
     private var slice: StatsSlice {
         StatsSlicer.slice(model.stats, period: model.statsPeriod)
@@ -28,6 +29,9 @@ struct StatsPane: View {
             } else {
                 let s = slice
                 kpis(s)
+                // Только у того, кто сам завёл список хостов. У остальных
+                // model.remote всегда пуст, и строки этой просто нет.
+                if !model.remote.isEmpty { machines(s) }
                 chartBlock(s)
                 Divider().overlay(StatsPalette.line).padding(.vertical, 11)
                 bottom(s)
@@ -111,6 +115,74 @@ struct StatsPane: View {
         .padding(.horizontal, 9).padding(.vertical, 7)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(StatsPalette.card)
+    }
+
+    // MARK: Машины
+
+    /// Расход с других машин. В цифрах выше он уже сложен с местным: аккаунт
+    /// один, лимит общий. Строка нужна, чтобы было видно, кто именно жжёт.
+    private func machines(_ s: StatsSlice) -> some View {
+        let byHost = model.remote.map { ($0.host, StatsSlicer.slice($0.asStats,
+                                                                   period: model.statsPeriod).total) }
+        let elsewhere = byHost.reduce(0) { $0 + $1.1 }
+        // Местное считаем вычитанием, а не отдельным проходом: в s.total уже
+        // лежит сумма, и два независимых счёта разъехались бы.
+        let here = max(0, s.total - elsewhere)
+        return VStack(alignment: .leading, spacing: 5) {
+            Button(action: { machinesOpen.toggle() }) {
+                HStack(spacing: 6) {
+                    Text(machinesOpen ? "▾" : "▸")
+                        .font(StatsMetrics.small).foregroundStyle(StatsPalette.accent)
+                    Text(L.s("ПО МАШИНАМ", "BY MACHINE"))
+                        .font(StatsMetrics.small).tracking(0.8)
+                        .foregroundStyle(StatsPalette.key)
+                    Spacer(minLength: 6)
+                    Text(L.s("отсюда \(Fmt.tokens(here)) · со стороны \(Fmt.tokens(elsewhere))",
+                             "here \(Fmt.tokens(here)) · elsewhere \(Fmt.tokens(elsewhere))"))
+                        .font(StatsMetrics.small).monospacedDigit()
+                        .foregroundStyle(StatsPalette.value)
+                }
+            }
+            .buttonStyle(.plain)
+            .help(L.s("расход с других машин, собирается раз в сутки по ssh",
+                      "usage from other machines, collected daily over ssh"))
+
+            if machinesOpen {
+                machineRow(L.s("эта машина", "this mac"), here, s.total)
+                ForEach(byHost, id: \.0) { host, value in
+                    machineRow(host, value, s.total)
+                }
+                if let stale = staleNote() {
+                    Text(stale).font(StatsMetrics.tiny).foregroundStyle(StatsPalette.faint)
+                }
+            }
+        }
+        .padding(.bottom, 11)
+    }
+
+    private func machineRow(_ name: String, _ value: Int, _ total: Int) -> some View {
+        let percent = total > 0 ? Int((Double(value) / Double(total) * 100).rounded()) : 0
+        return HStack(spacing: 6) {
+            Text(name).font(StatsMetrics.small)
+                .foregroundStyle(StatsPalette.key)
+                .lineLimit(1).minimumScaleFactor(0.8)
+                .frame(width: 78, alignment: .leading)
+            (Text(Gauge.bars(percent: percent, width: 10).filled).foregroundStyle(StatsPalette.accent)
+             + Text(Gauge.bars(percent: percent, width: 10).empty).foregroundStyle(StatsPalette.empty))
+                .font(StatsMetrics.small)
+            Spacer(minLength: 2)
+            Text(Fmt.tokens(value)).font(StatsMetrics.small).monospacedDigit()
+                .foregroundStyle(StatsPalette.value)
+        }
+    }
+
+    /// Предупреждение, если данные с машин залежались: сбор суточный, но
+    /// сервер мог быть недоступен, и молча показывать вчерашнее нечестно.
+    private func staleNote() -> String? {
+        guard let oldest = model.remote.map({ $0.collectedAt ?? .distantPast }).min() else { return nil }
+        let hours = Int(Date().timeIntervalSince(oldest) / 3600)
+        guard hours >= 26 else { return nil }
+        return L.s("данные собраны \(hours) ч назад", "collected \(hours) h ago")
     }
 
     // MARK: График

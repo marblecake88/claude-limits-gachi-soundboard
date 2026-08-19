@@ -1,6 +1,6 @@
 # claude limits gachi soundboard
 
-[![release](https://img.shields.io/badge/release-v1.9.4-ff598c)](https://github.com/marblecake88/claude-limits-gachi-soundboard/releases)
+[![release](https://img.shields.io/badge/release-v1.9.5-ff598c)](https://github.com/marblecake88/claude-limits-gachi-soundboard/releases)
 [![downloads](https://img.shields.io/github/downloads/marblecake88/claude-limits-gachi-soundboard/total)](https://github.com/marblecake88/claude-limits-gachi-soundboard/releases)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 ![macos](https://img.shields.io/badge/macos-14%2B-black)
@@ -24,8 +24,8 @@
 плавающую плашку и так же сами возвращаются, когда место освободилось. Плашка висит поверх
 всего и на всех рабочих столах, перетаскивается мышкой, по клику открывает ту же панель,
 бегущая строка в ней та же. Когда строка меню спрятана целиком, в полноэкранном режиме или
-кино, плашка не вылезает: цифр сейчас нет ни у кого, и мешать незачем. Тумблером в панели
-её можно держать постоянно, тогда видно и в полный экран.
+кино, плашка не вылезает: цифр сейчас нет ни у кого, и мешать незачем. В панели три
+положения, ВЫКЛ, АВТО и ВСЕГДА, так что её можно и держать постоянно, и выключить совсем.
 
 **Зовёт, когда claude закончил.** Работаешь в одном окне, claude пилит задачу в другом.
 Закончил и ждёт тебя, а ты этого не видишь. Включаешь READY ALERTS, и строка меню
@@ -137,8 +137,9 @@ menus, and macOS silently drops the icons that no longer fit. If we get dropped,
 move to a floating plaque on their own, and move back once there is room again. The plaque
 sits above everything, on every desktop, drags where you like, and opens the same panel on a
 click, same marquee inside. When the menu bar is hidden altogether, fullscreen or a movie, the
-plaque stays away: nobody's numbers are showing right now, so there is nothing to fix. A
-switch in the panel keeps it on permanently, fullscreen included.
+plaque stays away: nobody's numbers are showing right now, so there is nothing to fix. The
+panel has three positions, OFF, AUTO and ALWAYS, so you can keep it on permanently or turn it
+off for good.
 
 **Calls you when claude is done.** You work in one window while claude grinds away in
 another. It finishes, waits for you, and you never notice. Turn on READY ALERTS and the menu

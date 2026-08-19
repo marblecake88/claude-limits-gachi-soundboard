@@ -328,22 +328,58 @@ struct PanelView: View {
     // MARK: Плавающая плашка
 
     /// Место в строке меню раздаёт система, и приложениям с длинным меню её не
-    /// хватает: наш элемент выкидывают. Плашка появится сама, когда это
-    /// случится, а тумблером её можно держать постоянно.
+    /// хватает: наш элемент выкидывают. В авто плашка появляется сама, когда
+    /// это случилось, и уходит, когда место вернулось.
+    ///
+    /// Выключить надо давать явно: определение вытеснения опирается на список
+    /// окон системы, а он недокументирован, и если он где-то соврёт, человек
+    /// должен просто выключить, а не бороться с догадками приложения.
     private func plaqueRow() -> some View {
         VStack(alignment: .leading, spacing: 0) {
             RowShell {
-                RowKey(L.s("Плашка всегда", "Floating plaque"))
+                RowKey(L.s("Плашка", "Plaque"))
                 Spacer(minLength: 8)
-                Switch(isOn: Binding(
-                    get: { model.plaqueAlways },
-                    set: { model.setPlaqueAlways($0) }
-                ))
+                HStack(spacing: 5) {
+                    ForEach(PlaqueMode.allCases, id: \.self) { mode in
+                        Button(action: { model.setPlaqueMode(mode) }) {
+                            Text(Self.plaqueTitle(mode))
+                                .font(Metrics.font).tracking(Metrics.trackFoot)
+                                .foregroundStyle(model.plaqueMode == mode
+                                                 ? Palette.value : Palette.faint)
+                                .padding(.horizontal, 7).padding(.vertical, 2)
+                                .background(RoundedRectangle(cornerRadius: 6)
+                                    .fill(model.plaqueMode == mode ? Palette.fieldBg : .clear))
+                                .overlay(RoundedRectangle(cornerRadius: 6)
+                                    .stroke(model.plaqueMode == mode
+                                            ? Palette.fieldLine : Palette.line, lineWidth: 1))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
             }
-            if !model.plaqueAlways {
-                Note(L.s("Появится сама, если нас вытеснят из строки меню или окно развернут на весь экран",
-                         "Shows up on its own if we get squeezed out of the menu bar, or a window goes fullscreen"))
-            }
+            Note(Self.plaqueNote(model.plaqueMode))
+        }
+    }
+
+    private static func plaqueTitle(_ mode: PlaqueMode) -> String {
+        switch mode {
+        case .off:    return L.s("ВЫКЛ", "OFF")
+        case .auto:   return L.s("АВТО", "AUTO")
+        case .always: return L.s("ВСЕГДА", "ALWAYS")
+        }
+    }
+
+    private static func plaqueNote(_ mode: PlaqueMode) -> String {
+        switch mode {
+        case .off:
+            return L.s("Только строка меню, что бы ни случилось",
+                       "Menu bar only, whatever happens")
+        case .auto:
+            return L.s("Появится сама, если нас вытеснят из строки меню",
+                       "Shows up on its own if we get squeezed out of the menu bar")
+        case .always:
+            return L.s("Висит поверх всего, включая полный экран",
+                       "Floats above everything, fullscreen included")
         }
     }
 

@@ -327,20 +327,36 @@ public struct SqueezeWatch: Sendable {
 }
 
 /// Нужна ли сейчас плавающая плашка.
+/// Когда держать плавающую плашку.
+public enum PlaqueMode: String, Sendable, CaseIterable {
+    /// Никогда. Нужен затем, что определение вытеснения опирается на список
+    /// окон системы, а он недокументирован: если он где-то соврёт, человек
+    /// должен иметь возможность просто выключить, а не бороться с догадками.
+    case off
+    /// Только когда нас выкинули из строки меню. По умолчанию.
+    case auto
+    /// Всегда, в том числе в полном экране.
+    case always
+}
+
 public enum PlaquePlan {
     /// Правило целиком, в одном месте.
     ///
-    /// Главное тут второе условие. Строку меню бывает не видно вообще: полный
+    /// Главное тут третье условие. Строку меню бывает не видно вообще: полный
     /// экран, кино, автоскрытие. Тогда наш элемент тоже не нарисован, но это не
     /// вытеснение, а общая тишина, и вылезать поверх чужого кино незачем.
     ///
     /// Счётчик промахов передаётся замыканием намеренно: пока строки меню не
     /// видно, его нельзя трогать. Иначе полминуты в полном экране накрутят
     /// промахов, и на выходе плашка выскочит там, где места ей хватает.
-    public static func wanted(always: Bool, barShowing: Bool,
+    public static func wanted(mode: PlaqueMode, barShowing: Bool,
                               squeezed: () -> Bool) -> Bool {
-        if always { return true }
-        guard barShowing else { return false }
-        return squeezed()
+        switch mode {
+        case .off: return false
+        case .always: return true
+        case .auto:
+            guard barShowing else { return false }
+            return squeezed()
+        }
     }
 }

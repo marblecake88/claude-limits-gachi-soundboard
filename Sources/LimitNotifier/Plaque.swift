@@ -105,36 +105,50 @@ enum MenuBar {
         let ours: Bool
         /// Строку меню видно вообще: рисуют хоть чьи-то иконки.
         let showing: Bool
+        /// Что именно увидели. Только для лога: без доступа к чужой машине это
+        /// единственный способ понять, почему решение принято так, а не иначе.
+        let note: String
     }
 
     /// Оба ответа за один опрос: список окон стоит около миллисекунды, и просить
     /// его дважды подряд незачем.
     static func state(ours number: Int) -> State {
         let mine = Int(ProcessInfo.processInfo.processIdentifier)
-        // Иконки строки меню живут в правой половине экрана. Проверка нужна,
-        // потому что полноэкранное окно тоже держит у верхней кромки полосу
-        // своего слоя, но во всю ширину и от нуля.
-        let midX = NSScreen.main?.frame.midX ?? 0
         let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID)
             as? [[String: Any]] ?? []
 
         var ours = false
-        var foreign = false
+        var foreign = 0
+        var leftmost = Double.greatestFiniteMagnitude
+        var rightmost = -Double.greatestFiniteMagnitude
+
         for window in list {
             if (window[kCGWindowNumber as String] as? Int) == number { ours = true; continue }
-            guard !foreign else { continue }
-            // Чужие: своя же плашка стоит там же, наверху справа, и без этой
-            // проверки строка меню всегда выглядела бы видимой.
+            // Чужие иконки строки меню. Своё исключаем по pid: плашка стоит там
+            // же, наверху, и без этого строка меню всегда выглядела бы живой.
+            //
+            // Ширину ограничиваем нарочно: полноэкранное окно держит у верхней
+            // кромки свою полосу того же слоя, но во всю ширину экрана. Раньше
+            // тут стояло сравнение с серединой главного экрана, но на втором
+            // мониторе она уезжает куда угодно, и проверка врала.
             guard let pid = window[kCGWindowOwnerPID as String] as? Int, pid != mine,
                   let layer = window[kCGWindowLayer as String] as? Int, layer >= 25,
                   let bounds = window[kCGWindowBounds as String] as? [String: Any],
                   let y = bounds["Y"] as? Double, y < 40,
                   let height = bounds["Height"] as? Double, height < 40,
-                  let x = bounds["X"] as? Double, x >= midX
+                  let width = bounds["Width"] as? Double, width < 400,
+                  let x = bounds["X"] as? Double
             else { continue }
-            foreign = true
+            foreign += 1
+            leftmost = min(leftmost, x)
+            rightmost = max(rightmost, x + width)
         }
-        return State(ours: ours, showing: foreign)
+
+        let where_ = foreign > 0 ? String(format: ", чужие x %.0f..%.0f", leftmost, rightmost) : ""
+        return State(ours: ours, showing: foreign > 0,
+                     note: "окно \(number), нас рисуют: \(ours ? "да" : "нет")"
+                         + ", чужих иконок \(foreign)\(where_)"
+                         + ", экранов \(NSScreen.screens.count)")
     }
 }
 

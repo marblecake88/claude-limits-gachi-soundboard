@@ -22,8 +22,16 @@ public enum Anchor {
     /// предыдущих суток, и тогда ближайшее вхождение может быть ещё сегодня.
     /// Считаем по компонентам календаря, а не прибавлением 86400 секунд, иначе
     /// переход на летнее время сдвинет время по стенным часам.
+    ///
+    /// windowEndsAt сдвигает пинг за конец уже идущего окна: поверх идущего
+    /// окна пинг холостой, новое окно открывается только после его конца.
+    /// Сброс тогда уезжает позже якоря (окно кончается после базы, значит
+    /// плюс пять часов дают время после якоря), и это осознанный размен:
+    /// иначе ночь остаётся вообще без свежего окна.
     public static func nextPing(anchorHour: Int, anchorMinute: Int,
-                                from now: Date, calendar: Calendar = .current) -> Date {
+                                from now: Date, calendar: Calendar = .current,
+                                windowEndsAt: Date? = nil,
+                                gap: TimeInterval = 60) -> Date {
         // Отматываем пять часов назад по циферблату, с переходом через полночь.
         let baseHour = ((anchorHour - 5) % 24 + 24) % 24
         var match = DateComponents()
@@ -34,7 +42,11 @@ public enum Anchor {
         // часов), берём ближайшее следующее, а не пропускаем день целиком.
         let next = calendar.nextDate(after: now, matching: match, matchingPolicy: .nextTime)
         // Страховка. На валидных компонентах nextDate не возвращает nil.
-        return next ?? now.addingTimeInterval(24 * 3600)
+        let planned = next ?? now.addingTimeInterval(24 * 3600)
+        // Окно ещё идёт в плановый момент: ждём его конца с небольшим запасом,
+        // сервер закрывает окно не ровно в секунду resets_at.
+        guard let end = windowEndsAt, end > planned else { return planned }
+        return end.addingTimeInterval(gap)
     }
 
     /// Во сколько сбросится окно, если пингануть в pingTime.

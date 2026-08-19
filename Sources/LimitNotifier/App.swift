@@ -25,7 +25,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Плавающая плашка и слежка за тем, не выкинули ли нас из строки меню.
     private var plaque: Plaque?
-    private var squeeze = SqueezeWatch()
+    /// Три промаха подряд, а не два: на моей машине двух хватало, чтобы поймать
+    /// переходное состояние строки меню и мигнуть плашкой на пару секунд.
+    private var squeeze = SqueezeWatch(needed: 3)
     /// Момент запуска: первые секунды строка меню ещё раскладывается, и судить
     /// по ней нельзя.
     private let startedAt = Date()
@@ -112,7 +114,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// переключения. А раз для решения нужны два промаха подряд, одиночная
     /// проверка всё равно ждала бы следующей перерисовки, то есть до минуты.
     private func checkSoon() {
-        for delay in [0.2, 0.45, 0.75] {
+        for delay in [0.2, 0.45, 0.75, 1.1] {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
                 MainActor.assumeIsolated { self?.checkSqueeze() }
             }
@@ -132,30 +134,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard Date().timeIntervalSince(startedAt) > Self.settleDelay else { return }
 
         let bar = MenuBar.state(ours: number)
-        let wanted = PlaquePlan.wanted(always: model.settings.plaqueAlways,
-                                       barShowing: bar.showing) {
+        let mode = model.settings.plaqueMode
+        let wanted = PlaquePlan.wanted(mode: mode, barShowing: bar.showing) {
             squeeze.update(drawn: bar.ours)
         }
         guard wanted != plaque.isVisible else { return }
 
         let reason: String
-        if model.settings.plaqueAlways {
-            reason = "включена в настройках"
-        } else if !bar.showing {
-            reason = "строки меню не видно"
-        } else {
-            reason = wanted ? "вытеснены из строки меню" : "место в строке меню вернулось"
+        switch mode {
+        case .off: reason = "выключена в настройках"
+        case .always: reason = "включена в настройках"
+        case .auto:
+            if !bar.showing {
+                reason = "строки меню не видно"
+            } else {
+                reason = wanted ? "вытеснены из строки меню" : "место в строке меню вернулось"
+            }
         }
+
         if wanted {
             plaque.show()
             drawTape(offset: lastOffset)   // сразу с актуальной лентой, а не пустой пилюлей
-            Log.write("плашка показана: \(reason)")
+            // С подробностями зонда: если решение окажется неверным, по логу
+            // будет видно, что именно система про нас сказала.
+            Log.write("плашка показана: \(reason) · \(bar.note)")
         } else {
             // Пока от плашки открыта панель, не убираем: попап останется висеть
             // без опоры.
             if popover?.isShown == true, anchor === plaque.anchor { return }
             plaque.hide()
-            Log.write("плашка убрана: \(reason)")
+            Log.write("плашка убрана: \(reason) · \(bar.note)")
         }
     }
 
@@ -625,6 +633,9 @@ final class AppModel: ObservableObject {
     /// Сбрасывается первым же удачным ответом.
     private var retryAfter: Int?
     private var lastDigest = ""
+    /// На какой сдвинутый пинг уже написали в лог. Планировщик дёргается и на
+    /// пробуждении мака, и на смене настроек, а строка нужна одна на сдвиг.
+    private var lastShiftLogged: Date?
     private var lastWakeSpec = ""
 
     @Published private(set) var spend = Spend.empty
@@ -633,6 +644,9 @@ final class AppModel: ObservableObject {
     // MARK: - Статистика
 
     @Published private(set) var stats = UsageStats.empty
+    /// Расход с других машин. Пусто у всех, кроме того, кто сам завёл список
+    /// хостов: панель тогда про машины даже не заикается.
+    @Published private(set) var remote: [RemoteUsage] = []
     @Published private(set) var statsScanning = false
     @Published private(set) var statsOpen = false
     @Published private(set) var statsPeriod: StatsPeriod = .all
@@ -681,10 +695,14 @@ final class AppModel: ObservableObject {
         Task.detached(priority: .utility) {
             let started = Date()
             let result = StatsScanner.load(rebuild: rebuild)
+            // Пара маленьких json, читаются мгновенно. Сам сбор по ssh идёт
+            // отдельной задачей: он долгий, и панель его ждать не должна.
+            let remote = RemoteUsage.all()
             let ms = Int(Date().timeIntervalSince(started) * 1000)
             await MainActor.run { [weak self] in
                 guard let self else { return }
-                self.stats = result.stats
+                self.stats = result.stats.adding(remote)
+                self.remote = remote
                 self.spend = result.spend
                 self.statsScanning = false
                 // Долгие проходы это либо первый запуск, либо кнопка. Короткие
@@ -708,13 +726,14 @@ final class AppModel: ObservableObject {
     @Published private(set) var tick = Date()
     private var tickTask: Task<Void, Never>?
     private var updateTask: Task<Void, Never>?
+    private var remoteTask: Task<Void, Never>?
 
 
     init() {
         // Язык применяем до первой отрисовки: иначе панель успеет собраться
         // на системном, а сохранённый выбор подхватится только со второго раза.
         if let saved = settings.language { L.lang = saved }
-        plaqueAlways = settings.plaqueAlways
+        plaqueMode = settings.plaqueMode
         Log.trim()
         // Пишем сразу всё, что понадобится при разборе чужого лога: версию,
         // билд и состояние того, что включается руками.
@@ -724,7 +743,9 @@ final class AppModel: ObservableObject {
                   + " · уведомления \(HookInstaller.isInstalled ? "вкл" : "выкл")"
                   + " · accessibility \(FocusProbe.isTrusted ? "есть" : "нет")"
                   + " · keep-alive \(settings.keepAliveEnabled ? "вкл" : "выкл")"
-                  + " · язык \(L.lang == .ru ? "ru" : "en")")
+                  + " · язык \(L.lang == .ru ? "ru" : "en")"
+                  + " · macos \(ProcessInfo.processInfo.operatingSystemVersionString)"
+                  + " · экранов \(NSScreen.screens.count)")
         startPolling()
         rescheduleKeepAlive()
         refreshWakeState()
@@ -754,6 +775,19 @@ final class AppModel: ObservableObject {
             while !Task.isCancelled {
                 await self?.checkForUpdate()
                 try? await Task.sleep(for: .seconds(24 * 3600))
+            }
+        }
+
+        // Раз в сутки собираем расход с других машин, если список хостов заведён.
+        // Внутри ssh на каждую машину, поэтому отдельной задачей и в фоне:
+        // недоступный сервер не должен задерживать панель.
+        remoteTask = Task { [weak self] in
+            while !Task.isCancelled {
+                let collected = await Task.detached(priority: .background) {
+                    RemoteUsage.collectIfDue()
+                }.value
+                if collected { self?.rescanStats(force: true) }
+                try? await Task.sleep(for: .seconds(3600))
             }
         }
 
@@ -936,17 +970,15 @@ final class AppModel: ObservableObject {
         rescheduleKeepAlive()
     }
 
-    /// Держать плашку всегда. Выключено не значит "никогда": при вытеснении из
-    /// строки меню она всё равно появится, иначе цифр не останется вообще.
-    ///
-    /// Отдельным полем, а не чтением настроек напрямую: делегат перерисовывает
-    /// строку по изменениям модели, и переключатель должен доходить до него сразу.
-    @Published private(set) var plaqueAlways = false
+    /// Режим плавающей плашки. Отдельным полем, а не чтением настроек напрямую:
+    /// делегат перерисовывает строку по изменениям модели, и переключатель
+    /// должен доходить до него сразу.
+    @Published private(set) var plaqueMode: PlaqueMode = .auto
 
-    func setPlaqueAlways(_ on: Bool) {
-        settings.plaqueAlways = on
-        plaqueAlways = on
-        Log.write("плашка всегда \(on ? "вкл" : "выкл")")
+    func setPlaqueMode(_ mode: PlaqueMode) {
+        settings.plaqueMode = mode
+        plaqueMode = mode
+        Log.write("плашка: режим \(mode.rawValue)")
     }
 
     /// Окно с объяснением, зачем нужен будильник и что для него сделать.
@@ -1075,12 +1107,22 @@ final class AppModel: ObservableObject {
             nextPingText = L.s("выключено", "off")
             return
         }
+        // Конец идущего окна отодвигает пинг за него: поверх работающего окна
+        // пинг ничего не открывает, а после его конца открывает новое.
+        let planned = Anchor.nextPing(anchorHour: settings.anchorHour,
+                                      anchorMinute: settings.anchorMinute, from: Date())
         let ping = Anchor.nextPing(anchorHour: settings.anchorHour,
                                    anchorMinute: settings.anchorMinute,
-                                   from: Date())
+                                   from: Date(), windowEndsAt: snapshot?.session?.resetsAt)
         let hhmm = DateFormatter()
         hhmm.dateFormat = "HH:mm"
         nextPingText = hhmm.string(from: ping) + L.s(", через ", ", in ") + Fmt.until(ping)
+        let shifted = ping > planned
+        if shifted, ping != lastShiftLogged {
+            Log.write("окно идёт, пинг сдвинут с \(hhmm.string(from: planned))"
+                      + " на \(hhmm.string(from: ping))")
+            lastShiftLogged = ping
+        }
 
         // Если до пинга осталось немного, не даём маку заснуть обратно.
         //
@@ -1089,7 +1131,10 @@ final class AppModel: ObservableObject {
         // следующем пробуждении. В ночь на 28 июля мак проснулся в 03:43, пинг
         // должен был уйти в 03:45, а ушёл в 03:56, и окно закрылось на двенадцать
         // минут позже нужного.
-        let waking = holdAwakeIfSoon(until: ping)
+        // Сдвинутого пинга ждать дольше двадцати минут, а спящий мак его
+        // пропустит до следующего пробуждения по pmset, то есть до завтра.
+        // ponytail: потолок три часа, дальше батарея дороже одного окна.
+        let waking = holdAwakeIfSoon(until: ping, window: shifted ? 3 * 3600 : 20 * 60)
 
         keepAliveTask = Task { [weak self] in
             let delay = ping.timeIntervalSinceNow
@@ -1124,7 +1169,9 @@ final class AppModel: ObservableObject {
         // из-за чего нужный пинг терялся. Лишний пинг по идущему окну безвреден,
         // он его не перезапускает, а вот пропуск нужного пинга ломает всё утро.
         if snapshot?.sessionRunning(at: Date()) == true {
-            Log.write("ping skipped, window already running")
+            // Не пингуем поверх: планировщик ниже по стеку сам перенесёт нас на
+            // конец этого окна и откроет новое уже за ним.
+            Log.write("окно ещё идёт, жду его конца")
             return
         }
         guard let claude = Proc.findClaude() else {

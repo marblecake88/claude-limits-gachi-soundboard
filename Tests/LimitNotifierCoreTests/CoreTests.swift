@@ -478,6 +478,34 @@ struct AnchorTests {
         }
     }
 
+    /// Ночь на 4 августа: окно открылось в 23:48 и шло до 04:48, плановый пинг
+    /// в 04:00 приходился на него. Раньше пинг просто терялся, теперь съезжает
+    /// за конец окна.
+    @Test("Идущее окно сдвигает пинг за свой конец")
+    func windowShiftsPing() {
+        let end = local(2026, 8, 4, 4, 48)
+        let ping = Anchor.nextPing(anchorHour: 9, anchorMinute: 0,
+                                   from: local(2026, 8, 4, 0, 30), calendar: cal,
+                                   windowEndsAt: end, gap: 60)
+        #expect(ping == end.addingTimeInterval(60))
+    }
+
+    @Test("Окно кончается до планового пинга: время не трогаем")
+    func windowEndingEarlyKeepsPing() {
+        let ping = Anchor.nextPing(anchorHour: 9, anchorMinute: 0,
+                                   from: local(2026, 8, 4, 0, 30), calendar: cal,
+                                   windowEndsAt: local(2026, 8, 4, 3, 0))
+        #expect(ping == local(2026, 8, 4, 4, 0))
+    }
+
+    @Test("Протухшее окно в прошлом пинг не двигает")
+    func staleWindowKeepsPing() {
+        let ping = Anchor.nextPing(anchorHour: 9, anchorMinute: 0,
+                                   from: local(2026, 8, 4, 0, 30), calendar: cal,
+                                   windowEndsAt: local(2026, 8, 3, 22, 0))
+        #expect(ping == local(2026, 8, 4, 4, 0))
+    }
+
     /// Ближайший пинг всегда в пределах суток, иначе расписание разъехалось.
     @Test("Пинг не дальше суток вперёд", arguments: [(0, 0), (9, 0), (23, 45)])
     func pingWithinADay(anchor: (hour: Int, minute: Int)) {
@@ -1008,7 +1036,7 @@ struct SqueezeWatchTests {
     @Test("Строку меню спрятали целиком: плашки нет")
     func hiddenBarStaysQuiet() {
         var asked = false
-        let wanted = PlaquePlan.wanted(always: false, barShowing: false) {
+        let wanted = PlaquePlan.wanted(mode: .auto, barShowing: false) {
             asked = true
             return true
         }
@@ -1020,8 +1048,8 @@ struct SqueezeWatchTests {
 
     @Test("Строка меню видна, нас выкинули: плашка нужна")
     func squeezedWithVisibleBar() {
-        #expect(PlaquePlan.wanted(always: false, barShowing: true) { true })
-        #expect(PlaquePlan.wanted(always: false, barShowing: true) { false } == false)
+        #expect(PlaquePlan.wanted(mode: .auto, barShowing: true) { true })
+        #expect(PlaquePlan.wanted(mode: .auto, barShowing: true) { false } == false)
     }
 
     /// Ручной режим сильнее всего: человек включил, значит хочет видеть, в том
@@ -1029,8 +1057,22 @@ struct SqueezeWatchTests {
     @Test("Включённая руками плашка висит всегда")
     func alwaysWins() {
         var asked = false
-        #expect(PlaquePlan.wanted(always: true, barShowing: false) { asked = true; return false })
+        #expect(PlaquePlan.wanted(mode: .always, barShowing: false) { asked = true; return false })
         #expect(asked == false)
+    }
+
+    /// Регресс: у человека на другой машине плашка висела и не убиралась, а
+    /// выключить её было нечем, тумблер означал только "держать всегда".
+    /// Явное "выкл" сильнее любых догадок о строке меню.
+    @Test("Выключенная плашка не появляется ни при каких условиях")
+    func offBeatsEverything() {
+        var asked = false
+        #expect(PlaquePlan.wanted(mode: .off, barShowing: true) {
+            asked = true
+            return true
+        } == false)
+        #expect(asked == false)
+        #expect(PlaquePlan.wanted(mode: .off, barShowing: false) { true } == false)
     }
 
     /// Вытеснение не разовое событие, а состояние: пока места нет, плашка висит.
@@ -1886,5 +1928,84 @@ struct OwnRunsTests {
     func probeIsNotProject() {
         #expect(ReadyLog.isOurProbe(
             cwd: "/Users/k/Library/Application Support/LimitNotifier/probe"))
+    }
+}
+
+@Suite("Расход с других машин")
+struct RemoteUsageTests {
+
+    /// Каталог с одним хостом и его сводкой, как их кладёт tools/remote-usage.py.
+    private func fixture(hosts: String = "taras\n", json: String) throws -> URL {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("remote-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try hosts.write(to: dir.appendingPathComponent("hosts"), atomically: true, encoding: .utf8)
+        try json.write(to: dir.appendingPathComponent("taras.json"),
+                       atomically: true, encoding: .utf8)
+        return dir
+    }
+
+    private let sample = """
+    {"ssh_host": "taras", "host": "taras.example",
+     "days": {"2026-08-01": {"requests": 7,
+        "models": {"claude-opus-5": {"input": 100, "output": 20,
+                                     "cache_creation": 999, "cache_read": 88888, "requests": 7}}}},
+     "hours": {"09": {"claude-opus-5": 120}}}
+    """
+
+    @Test("Читаем сводку и режем кэш")
+    func parses() throws {
+        let dir = try fixture(json: sample)
+        let all = RemoteUsage.all(in: dir)
+        #expect(all.count == 1)
+        let m = try #require(all.first)
+        #expect(m.host == "taras")
+        // В дневную цифру идут только input+output, как на вкладке Stats.
+        #expect(m.days["2026-08-01"]?["Opus 5"] == 120)
+        #expect(m.hours["09"]?["Opus 5"] == 120)
+        #expect(m.requests["2026-08-01"] == 7)
+    }
+
+    /// Без списка хостов фича не существует: у того, кто просто поставил
+    /// приложение, никакой удалёнки нет и панель о ней молчит.
+    @Test("Нет списка хостов, нет и данных")
+    func disabledWithoutHosts() throws {
+        let dir = try fixture(hosts: "# только комментарий\n\n", json: sample)
+        #expect(RemoteUsage.enabled(in: dir) == false)
+        #expect(RemoteUsage.all(in: dir).isEmpty)
+    }
+
+    /// Чужие файлы в каталоге не должны превращаться в машины.
+    @Test("Берём только те json, что перечислены в hosts")
+    func ignoresUnlistedFiles() throws {
+        let dir = try fixture(json: sample)
+        try sample.write(to: dir.appendingPathComponent("postoronnij.json"),
+                         atomically: true, encoding: .utf8)
+        #expect(RemoteUsage.all(in: dir).map(\.host) == ["taras"])
+    }
+
+    @Test("Складывается с местным расходом")
+    func addsToLocal() throws {
+        let local = UsageStats(days: ["2026-08-01": ["Opus 5": 1000, "Haiku 4.5": 5]],
+                               hours: ["09": ["Opus 5": 1000]],
+                               requests: ["2026-08-01": 3], transcripts: 2,
+                               bestStreak: 1, currentStreak: 1, scannedAt: Date(),
+                               lifetimeTokens: 777)
+        let merged = local.adding(RemoteUsage.all(in: try fixture(json: sample)))
+        #expect(merged.days["2026-08-01"]?["Opus 5"] == 1120)
+        #expect(merged.days["2026-08-01"]?["Haiku 4.5"] == 5, "чужие модели не трогаем")
+        #expect(merged.hours["09"]?["Opus 5"] == 1120)
+        #expect(merged.requests["2026-08-01"] == 10)
+        // Итоги за всё время остаются локальными: удалённый сбор видит только
+        // последние недели, смешивать это с полной историей нельзя.
+        #expect(merged.lifetimeTokens == 777)
+    }
+
+    @Test("Пустой список машин ничего не меняет")
+    func addingNothingIsNoop() {
+        let local = UsageStats(days: ["2026-08-01": ["Opus 5": 10]], hours: [:],
+                               requests: [:], transcripts: 1, bestStreak: 0,
+                               currentStreak: 0, scannedAt: Date())
+        #expect(local.adding([]) == local)
     }
 }
