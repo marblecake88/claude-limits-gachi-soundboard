@@ -133,7 +133,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // мигнуть и сразу спрятаться.
         guard Date().timeIntervalSince(startedAt) > Self.settleDelay else { return }
 
-        let bar = MenuBar.state(ours: number)
+        let bar = MenuBar.state(ours: number, itemFrame: statusItem?.button?.window?.frame)
         let mode = model.settings.plaqueMode
         let wanted = PlaquePlan.wanted(mode: mode, barShowing: bar.showing) {
             squeeze.update(drawn: bar.ours)
@@ -157,14 +157,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             drawTape(offset: lastOffset)   // сразу с актуальной лентой, а не пустой пилюлей
             // С подробностями зонда: если решение окажется неверным, по логу
             // будет видно, что именно система про нас сказала.
-            Log.write("плашка показана: \(reason) · \(bar.note)")
+            Log.write("плашка показана: \(reason) · \(bar.note) · \(itemFrameNote())")
         } else {
             // Пока от плашки открыта панель, не убираем: попап останется висеть
             // без опоры.
             if popover?.isShown == true, anchor === plaque.anchor { return }
             plaque.hide()
-            Log.write("плашка убрана: \(reason) · \(bar.note)")
+            Log.write("плашка убрана: \(reason) · \(bar.note) · \(itemFrameNote())")
         }
+    }
+
+    /// Где, по мнению AppKit, стоит наш элемент строки меню. Вытесненным он
+    /// уезжает влево вплоть до отрицательных координат, так что по этой цифре
+    /// видно, спор о видимости идёт о живом элементе или о выброшенном.
+    private func itemFrameNote() -> String {
+        guard let frame = statusItem?.button?.window?.frame else { return "рамки нет" }
+        return String(format: "элемент x %.0f w %.0f", frame.minX, frame.width)
     }
 
     /// Не даём развёрнутой панели уехать за правый край экрана.

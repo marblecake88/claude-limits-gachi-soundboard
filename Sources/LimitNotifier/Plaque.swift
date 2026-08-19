@@ -18,6 +18,9 @@ final class Plaque {
     /// К чему цеплять попап: тот же вид, что рисует ленту.
     var anchor: NSView { tape }
     var isVisible: Bool { panel.isVisible }
+    /// Номер окна самой плашки: она стоит там же, наверху, и при поиске своих
+    /// иконок строки меню её надо исключать, иначе она подтвердит сама себя.
+    var windowNumber: Int { panel.windowNumber }
 
     init(settings: Settings, onClick: @escaping () -> Void) {
         self.settings = settings
@@ -122,43 +125,66 @@ enum MenuBar {
 
     /// Оба ответа за один опрос: список окон стоит около миллисекунды, и просить
     /// его дважды подряд незачем.
-    static func state(ours number: Int) -> State {
+    ///
+    /// Себя ищем двумя способами. Первый, по номеру окна, точный. Второй, по
+    /// месту и ширине самого элемента, которые знает AppKit: он нужен на случай,
+    /// если система перестанет отдавать наш номер. В Tahoe строку меню
+    /// перерисовали, и там АВТО считает нас вытесненными при живой иконке.
+    ///
+    /// Плашку по номеру не исключить: у панели он меняется между скрытием и
+    /// показом, и она успевала подтвердить сама себя. Поэтому сверяемся с
+    /// координатами элемента, а они у плашки заведомо другие.
+    static func state(ours number: Int, itemFrame: CGRect?) -> State {
         let mine = Int(ProcessInfo.processInfo.processIdentifier)
         let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID)
             as? [[String: Any]] ?? []
 
-        var ours = false
+        // Границы всех экранов: в списке изредка мелькают окна с координатами
+        // далеко за их пределами, и без этой отсечки они шли за иконки. Судим
+        // по левому краю окна: часы у самого края экрана шире его на пару
+        // точек, и проверка по правому краю выкидывала их из счёта.
+        let screens = NSScreen.screens.map(\.frame)
+        let minX = screens.map(\.minX).min() ?? 0
+        let maxX = screens.map(\.maxX).max() ?? 0
+
+        var byNumber = false
+        var byPlace = false
+        var mineOnTop = 0
         var foreign = 0
         var leftmost = Double.greatestFiniteMagnitude
         var rightmost = -Double.greatestFiniteMagnitude
 
         for window in list {
-            if (window[kCGWindowNumber as String] as? Int) == number { ours = true; continue }
-            // Чужие иконки строки меню. Своё исключаем по pid: плашка стоит там
-            // же, наверху, и без этого строка меню всегда выглядела бы живой.
-            //
-            // Ширину ограничиваем нарочно: полноэкранное окно держит у верхней
-            // кромки свою полосу того же слоя, но во всю ширину экрана. Раньше
-            // тут стояло сравнение с серединой главного экрана, но на втором
-            // мониторе она уезжает куда угодно, и проверка врала.
-            guard let pid = window[kCGWindowOwnerPID as String] as? Int, pid != mine,
-                  let layer = window[kCGWindowLayer as String] as? Int, layer >= 25,
+            if (window[kCGWindowNumber as String] as? Int) == number { byNumber = true }
+
+            // Иконка строки меню: свой слой, у верхней кромки, невысокая, узкая
+            // и в пределах экранов. Ширину ограничиваем нарочно: полноэкранное
+            // окно держит наверху полосу того же слоя, но во всю ширину.
+            guard let layer = window[kCGWindowLayer as String] as? Int, layer >= 25,
                   let bounds = window[kCGWindowBounds as String] as? [String: Any],
                   let y = bounds["Y"] as? Double, y < 40,
                   let height = bounds["Height"] as? Double, height < 40,
                   let width = bounds["Width"] as? Double, width < 400,
-                  let x = bounds["X"] as? Double
+                  let x = bounds["X"] as? Double, x >= minX - 8, x < maxX
             else { continue }
+
+            if (window[kCGWindowOwnerPID as String] as? Int) == mine {
+                mineOnTop += 1
+                if let itemFrame, abs(x - itemFrame.minX) <= 2, abs(width - itemFrame.width) <= 2 {
+                    byPlace = true
+                }
+                continue
+            }
             foreign += 1
             leftmost = min(leftmost, x)
             rightmost = max(rightmost, x + width)
         }
 
-        let where_ = foreign > 0 ? String(format: ", чужие x %.0f..%.0f", leftmost, rightmost) : ""
-        return State(ours: ours, showing: foreign > 0,
-                     note: "окно \(number), нас рисуют: \(ours ? "да" : "нет")"
-                         + ", чужих иконок \(foreign)\(where_)"
-                         + ", экранов \(NSScreen.screens.count)")
+        let range = foreign > 0 ? String(format: ", чужие x %.0f..%.0f", leftmost, rightmost) : ""
+        return State(ours: byNumber || byPlace, showing: foreign > 0,
+                     note: "окно \(number), по номеру: \(byNumber ? "да" : "нет")"
+                         + ", по месту: \(byPlace ? "да" : "нет")"
+                         + ", своих сверху \(mineOnTop), чужих \(foreign)\(range)")
     }
 }
 
