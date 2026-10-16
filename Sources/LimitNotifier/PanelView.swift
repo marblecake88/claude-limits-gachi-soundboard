@@ -208,6 +208,7 @@ struct PanelView: View {
 
             Sep()
 
+            percentRow()
             plaqueRow()
             loginRow()
             languageRow()
@@ -322,6 +323,19 @@ struct PanelView: View {
                              onDismiss: { model.dismiss(item.name) })
                 }
             }
+        }
+    }
+
+    // MARK: Только проценты
+
+    private func percentRow() -> some View {
+        RowShell {
+            RowKey(L.s("Только проценты", "Percent only"))
+            Spacer(minLength: 8)
+            Switch(isOn: Binding(
+                get: { model.percentOnly },
+                set: { model.setPercentOnly($0) }
+            ))
         }
     }
 

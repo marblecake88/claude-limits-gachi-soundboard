@@ -21,6 +21,7 @@ public final class Settings: ObservableObject {
         static let language = "language"
         static let plaqueAlways = "plaqueAlways"
         static let plaqueMode = "plaqueMode"
+        static let percentOnly = "percentOnly"
         static let plaqueX = "plaqueX"
         static let plaqueY = "plaqueY"
     }
@@ -85,6 +86,14 @@ public final class Settings: ObservableObject {
             return defaults.bool(forKey: Keys.plaqueAlways) ? .always : .auto
         }
         set { defaults.set(newValue.rawValue, forKey: Keys.plaqueMode); bump() }
+    }
+
+    /// В строке меню только два процента, без времени до сброса: 84/34 вместо
+    /// 84/34/1h07/4d. Для тех, кому важна сама нагрузка, а не часы, и у кого
+    /// строка меню и так забита.
+    public var percentOnly: Bool {
+        get { defaults.bool(forKey: Keys.percentOnly) }
+        set { defaults.set(newValue, forKey: Keys.percentOnly); bump() }
     }
 
     /// Куда её перетащили. nil, пока не двигали: тогда встаёт в правый верхний

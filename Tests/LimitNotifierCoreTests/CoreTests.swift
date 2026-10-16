@@ -1743,6 +1743,33 @@ struct ScanStateTests {
     }
 }
 
+@Suite("Настройки строки меню")
+struct MenuBarSettingsTests {
+
+    private func fresh() -> (Settings, UserDefaults, String) {
+        let name = "test-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        return (Settings(defaults: defaults), defaults, name)
+    }
+
+    /// По умолчанию строка полная: у тех, кто ничего не трогал, ничего не
+    /// должно поменяться после обновления.
+    @Test("Только проценты выключено по умолчанию")
+    func percentOnlyOffByDefault() {
+        let (settings, defaults, name) = fresh()
+        defer { defaults.removePersistentDomain(forName: name) }
+        #expect(settings.percentOnly == false)
+    }
+
+    @Test("Только проценты переживает перезапуск")
+    func percentOnlyPersists() {
+        let (settings, defaults, name) = fresh()
+        defer { defaults.removePersistentDomain(forName: name) }
+        settings.percentOnly = true
+        #expect(Settings(defaults: defaults).percentOnly == true)
+    }
+}
+
 @Suite("Папка проекта и вложенность")
 struct ProjectPathTests {
 

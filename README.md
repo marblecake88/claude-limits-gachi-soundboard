@@ -1,6 +1,6 @@
 # claude limits gachi soundboard
 
-[![release](https://img.shields.io/badge/release-v1.9.7-ff598c)](https://github.com/marblecake88/claude-limits-gachi-soundboard/releases)
+[![release](https://img.shields.io/badge/release-v1.10-ff598c)](https://github.com/marblecake88/claude-limits-gachi-soundboard/releases)
 [![downloads](https://img.shields.io/github/downloads/marblecake88/claude-limits-gachi-soundboard/total)](https://github.com/marblecake88/claude-limits-gachi-soundboard/releases)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 ![macos](https://img.shields.io/badge/macos-14%2B-black)
@@ -18,6 +18,8 @@
 **Лимиты всегда на виду.** В строке меню `84/34/1h07/4d`: 5-часовое окно, недельный лимит,
 сколько осталось до сброса каждого. Цифры меняют цвет на 60, 79 и 89 процентах, так что
 край видно не читая. Данные берутся из самого claude, никаких токенов на это не тратится.
+Если время не нужно, в панели есть тумблер «Только проценты», тогда в строке меню просто
+`84/34`.
 
 **Не пропадает, когда в строке меню нет места.** У JetBrains и Xcode меню длинное, и macOS
 молча выкидывает иконки, которые не влезли. Если нас выкинуло, цифры сами переезжают в
@@ -130,7 +132,8 @@ window. Wakes claude overnight so your window is fresh by morning. Plus a gachi 
 
 **Limits always visible.** `84/34/1h07/4d` in the menu bar: the 5-hour window, the weekly
 limit, and time until each resets. Numbers change colour at 60, 79 and 89 percent, so you
-see the edge without reading. Data comes from claude itself and costs no tokens.
+see the edge without reading. Data comes from claude itself and costs no tokens. Don't need
+the times? The "Percent only" switch in the panel leaves just `84/34`.
 
 **Does not disappear when the menu bar runs out of room.** JetBrains IDEs and Xcode have long
 menus, and macOS silently drops the icons that no longer fit. If we get dropped, the numbers

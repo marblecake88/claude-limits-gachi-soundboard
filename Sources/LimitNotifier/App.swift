@@ -251,6 +251,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         add(p.session, Self.color(p.sessionLevel))
         add("/", Self.separator)
         add(p.weekly, Self.color(p.weeklyLevel))
+        // Только проценты: время до сброса остаётся в панели, а строка меню
+        // становится вдвое короче.
+        guard !model.percentOnly else { return line }
         add("/", Self.separator)
         add(p.time, Self.timeColor)
         add("/", Self.separator)
@@ -742,6 +745,7 @@ final class AppModel: ObservableObject {
         // на системном, а сохранённый выбор подхватится только со второго раза.
         if let saved = settings.language { L.lang = saved }
         plaqueMode = settings.plaqueMode
+        percentOnly = settings.percentOnly
         Log.trim()
         // Пишем сразу всё, что понадобится при разборе чужого лога: версию,
         // билд и состояние того, что включается руками.
@@ -987,6 +991,16 @@ final class AppModel: ObservableObject {
     /// делегат перерисовывает строку по изменениям модели, и переключатель
     /// должен доходить до него сразу.
     @Published private(set) var plaqueMode: PlaqueMode = .auto
+
+    /// Показывать в строке меню только проценты. Полем модели, а не чтением
+    /// настроек: делегат перерисовывает строку по изменениям модели.
+    @Published private(set) var percentOnly = false
+
+    func setPercentOnly(_ on: Bool) {
+        settings.percentOnly = on
+        percentOnly = on
+        Log.write("строка меню: \(on ? "только проценты" : "проценты и время")")
+    }
 
     func setPlaqueMode(_ mode: PlaqueMode) {
         settings.plaqueMode = mode
