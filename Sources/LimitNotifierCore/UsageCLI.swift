@@ -129,7 +129,7 @@ public struct UsageClient {
             guard title.lowercased().hasPrefix("current"),
                   let percent = percent(in: tail) else { continue }
 
-            let (kind, label, isSession) = classify(title)
+            let (kind, label) = classify(title)
             rows.append(LimitRow(
                 id: kind == "weekly_scoped" ? "\(kind):\(label)" : kind,
                 kind: kind,
@@ -137,30 +137,26 @@ public struct UsageClient {
                 percent: percent,
                 severity: .unknown,
                 resetsAt: resetDate(in: tail, now: now),
-                group: isSession ? "session" : "weekly",
-                isSession: isSession
+                group: kind == "session" ? "session" : "weekly"
             ))
         }
 
         guard !rows.isEmpty else { return nil }
-        let session = rows.first(where: \.isSession)
-        // Окно считаем идущим, если сброс ещё впереди.
-        let active = session?.resetsAt.map { $0 > now } ?? false
-        return UsageSnapshot(rows: rows, fetchedAt: now, sessionWindowActive: active)
+        return UsageSnapshot(rows: rows, fetchedAt: now)
     }
 
     /// "Current session" -> 5h, "Current week (all models)" -> Weekly,
     /// "Current week (Fable)" -> Fable weekly.
-    private static func classify(_ title: String) -> (kind: String, label: String, isSession: Bool) {
+    private static func classify(_ title: String) -> (kind: String, label: String) {
         let lower = title.lowercased()
-        if lower.contains("session") { return ("session", "5h", true) }
+        if lower.contains("session") { return ("session", "5h") }
         guard let open = title.firstIndex(of: "("), let close = title.lastIndex(of: ")"),
               open < close else {
-            return ("weekly_all", "Weekly", false)
+            return ("weekly_all", "Weekly")
         }
         let scope = String(title[title.index(after: open)..<close])
-        if scope.lowercased().contains("all models") { return ("weekly_all", "Weekly", false) }
-        return ("weekly_scoped", "\(scope) weekly", false)
+        if scope.lowercased().contains("all models") { return ("weekly_all", "Weekly") }
+        return ("weekly_scoped", "\(scope) weekly")
     }
 
     private static func percent(in tail: String) -> Int? {

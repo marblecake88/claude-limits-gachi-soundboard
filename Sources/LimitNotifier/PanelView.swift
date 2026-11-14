@@ -55,26 +55,6 @@ private enum Metrics {
     static let trackFoot: CGFloat = 0.66
 }
 
-// MARK: - Чистая математика полей ввода
-
-enum AnchorInput {
-    /// Сдвиг якоря на delta минут с корректным заворотом через полночь.
-    static func shifted(hour: Int, minute: Int, byMinutes delta: Int) -> (hour: Int, minute: Int) {
-        var total = (hour * 60 + minute + delta) % 1440
-        if total < 0 { total += 1440 }
-        return (total / 60, total % 60)
-    }
-
-    /// Разбор "HH:mm". Возвращает nil на любом мусоре, чтоб поле откатилось.
-    static func parse(_ text: String) -> (hour: Int, minute: Int)? {
-        let parts = text.trimmingCharacters(in: .whitespaces).split(separator: ":", maxSplits: 1)
-        guard parts.count == 2,
-              let h = Int(parts[0]), let m = Int(parts[1]),
-              (0...23).contains(h), (0...59).contains(m) else { return nil }
-        return (h, m)
-    }
-}
-
 /// Часы и минуты даты без DateFormatter: календарь передаём параметром.
 /// Центы важны на мелких суммах, на крупных только шум.
 private func fmtMoney(_ v: Double) -> String {
@@ -194,20 +174,6 @@ struct PanelView: View {
 
             Sep()
 
-            SettingsBlock(
-                settings: model.settings,
-                nextPingText: model.nextPingText,
-                wakeAt: model.wakeAt,
-                notifyOn: model.notifyOn,
-                recent: model.recent,
-                onKeepAlive: { model.setKeepAlive($0) },
-                onNotify: { model.notifyOn ? model.setNotify(false) : model.showNotifyHelp() },
-                onWakeHelp: { model.showWakeHelp() },
-                onAnchor: { model.setAnchor(hour: $0, minute: $1) }
-            )
-
-            Sep()
-
             percentRow()
             plaqueRow()
             loginRow()
@@ -250,8 +216,8 @@ struct PanelView: View {
     }
 
     private func headerReset(now: Date) -> Text {
-        guard let at = model.snapshot?.session?.resetsAt else {
-            return Text("no active window").foregroundStyle(Palette.faint)
+        guard let at = model.snapshot?.main?.resetsAt else {
+            return Text("no data yet").foregroundStyle(Palette.faint)
         }
         return Text("resets in ").foregroundStyle(Palette.faint)
             + Text(Fmt.until(at, from: now)).foregroundStyle(Palette.value)
@@ -279,14 +245,8 @@ struct PanelView: View {
         // реально приходит: время сброса по окнам и метку обновления.
         // История за 8 окон тоже убрана: сервер её не отдаёт.
         VStack(alignment: .leading, spacing: 0) {
-            // Сброс сессии уже стоит в шапке, а скоупные окна (fable и прочие)
-            // сбрасываются вместе с общим недельным: своя строка на каждое
-            // только занимала место одинаковыми числами.
-            ForEach(snapshot.rows.filter { $0.kind == "weekly_all" }) { row in
-                if let at = row.resetsAt {
-                    ConfigRow(key: "\(row.label) resets", value: Fmt.until(at, from: now))
-                }
-            }
+            // Сброс недельного стоит в шапке, скоупные окна (fable и прочие)
+            // сбрасываются вместе с ним: отдельная строка повторяла бы шапку.
             ConfigRow(key: "Updated", value: hhmm(snapshot.fetchedAt), dim: true)
         }
     }
@@ -574,119 +534,6 @@ private struct LimitsChip: View {
 
 // MARK: - Блок настроек
 
-/// Вынесен отдельно ради подписки на Settings: галочки и время живут там,
-/// и без своего @ObservedObject панель не перерисовывалась бы по их смене.
-private struct SettingsBlock: View {
-    // Квалифицируем модуль: в SwiftUI есть свой Settings, имя иначе неоднозначно.
-    @ObservedObject var settings: LimitNotifierCore.Settings
-    let nextPingText: String
-    let wakeAt: String?
-    let notifyOn: Bool
-    let recent: [AppModel.Finished]
-    let onKeepAlive: (Bool) -> Void
-    let onNotify: () -> Void
-    let onWakeHelp: () -> Void
-    let onAnchor: (Int, Int) -> Void
-
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            RowShell {
-                RowKey("KEEP-ALIVE")
-                Spacer(minLength: 8)
-                Switch(isOn: Binding(get: { settings.keepAliveEnabled }, set: onKeepAlive))
-            }
-            Note(L.s("Утром к нужному часу будет окно с 99% лимита. Работаете с 8, ставьте 9",
-                     "Wakes Claude 5 hours early and burns an empty window, so at the hour "
-                     + "below your 5-hour limit is full. Start work at 8? Set 9"))
-
-            Spacer().frame(height: 9)
-
-            RowShell {
-                RowKey("FRESH WINDOW BY")
-                Spacer(minLength: 8)
-                timeField
-            }
-            Note(nextPingText)
-
-            Spacer().frame(height: 9)
-
-            RowShell {
-                RowKey("WAKE MAC", muted: !settings.keepAliveEnabled)
-                Spacer(minLength: 8)
-                if let at = wakeAt {
-                    Text(at)
-                        .font(Metrics.font).monospacedDigit()
-                        .foregroundStyle(Palette.accent)
-                } else {
-                    Text(L.s("не стоит", "not set"))
-                        .font(Metrics.font).foregroundStyle(Palette.faint)
-                }
-            }
-            .opacity(settings.keepAliveEnabled ? 1 : 0.45)
-
-            // Подробности и команда в отдельном окне: в строке панели такое
-            // объяснение не поместится, а без него команда выглядит подозрительно.
-            Button(action: onWakeHelp) {
-                Text(L.s("КАК НАСТРОИТЬ", "HOW TO SET UP"))
-                    .font(.system(size: 10, design: .monospaced))
-                    .tracking(Metrics.trackFoot)
-                    .foregroundStyle(Palette.dim)
-                    .padding(.horizontal, 8).padding(.vertical, 3)
-                    .overlay(RoundedRectangle(cornerRadius: 7)
-                        .stroke(Palette.line, lineWidth: 1))
-            }
-            .buttonStyle(.plain)
-            .padding(.top, 5)
-            .disabled(!settings.keepAliveEnabled)
-            .opacity(settings.keepAliveEnabled ? 1 : 0.45)
-
-            Note(L.s("Нужна, если закрываете мак на ночь. Вставьте команду в терминал один раз",
-                     "Needed if your mac sleeps at night. Paste the command in a terminal once"))
-
-        }
-    }
-
-    // MARK: Поле времени со степпером
-
-    private var timeField: some View {
-        // Не TextField намеренно. Системное поле при открытии панели само
-        // хватает фокус и выделяет текст системным акцентом, а цвет выделения
-        // приложением не задаётся. Значение меняется шевронами по 15 минут,
-        // этого для якоря достаточно, а чужой синевы в панели больше нет.
-        HStack(spacing: 0) {
-            Text(settings.anchorText)
-                .font(Metrics.font)
-                .monospacedDigit()
-                .foregroundStyle(Palette.value)
-                .frame(width: 44, alignment: .leading)
-                .padding(.horizontal, 6)
-
-            Rectangle().fill(Palette.fieldLine).frame(width: 1)
-
-            VStack(spacing: 0) {
-                StepButton(systemName: "chevron.up") { shift(by: 15) }
-                Rectangle().fill(Color.white.opacity(0.14)).frame(height: 1)
-                StepButton(systemName: "chevron.down") { shift(by: -15) }
-            }
-            .frame(width: 13)
-        }
-        .frame(height: 18)
-        .background(Palette.fieldBg)
-        .clipShape(RoundedRectangle(cornerRadius: 4))
-        .overlay(RoundedRectangle(cornerRadius: 4).stroke(Palette.fieldLine, lineWidth: 1))
-    }
-
-    private func shift(by minutes: Int) {
-        let next = AnchorInput.shifted(
-            hour: settings.anchorHour,
-            minute: settings.anchorMinute,
-            byMinutes: minutes
-        )
-        onAnchor(next.hour, next.minute)
-    }
-}
-
 // MARK: - Мелкие элементы
 
 /// Тонкий разделитель с воздухом сверху и снизу.
@@ -816,26 +663,6 @@ private struct Switch: View {
             .toggleStyle(.switch)
             .controlSize(.mini)
             .tint(Palette.accent)
-    }
-}
-
-private struct StepButton: View {
-    let systemName: String
-    let action: () -> Void
-
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: 5, weight: .semibold))
-                .foregroundStyle(Palette.value.opacity(0.8))
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color.white.opacity(hovering ? 0.16 : 0.07))
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
     }
 }
 

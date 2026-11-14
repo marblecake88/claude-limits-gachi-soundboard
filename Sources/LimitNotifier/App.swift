@@ -248,14 +248,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             line.append(NSAttributedString(string: text,
                                            attributes: [.font: Self.font, .foregroundColor: color]))
         }
-        add(p.session, Self.color(p.sessionLevel))
-        add("/", Self.separator)
         add(p.weekly, Self.color(p.weeklyLevel))
-        // Только проценты: время до сброса остаётся в панели, а строка меню
-        // становится вдвое короче.
+        // Только проценты: время до сброса остаётся в панели.
         guard !model.percentOnly else { return line }
-        add("/", Self.separator)
-        add(p.time, Self.timeColor)
         add("/", Self.separator)
         add(p.weeklyTime, Self.timeColor)
         return line
@@ -434,11 +429,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var snapshot: UsageSnapshot?
     @Published private(set) var lastError: UsageError?
     @Published private(set) var isRefreshing = false
-    @Published private(set) var nextPingText = L.s("выключено", "off")
     /// Версия из последнего релиза, если она новее нашей. Иначе nil.
     @Published private(set) var updateVersion: String?
-    /// Во сколько мак разбудит сам себя, если это настроено. Читаем из pmset.
-    @Published private(set) var wakeAt: String?
 
     // MARK: - Уведомления об окончании
 
@@ -619,7 +611,6 @@ final class AppModel: ObservableObject {
     /// Вызывается при каждом открытии панели: выбирает стартовый экран.
     func prepareForOpen() {
         screen = settings.visitedLimits ? .limits : .board
-        refreshWakeState()
         clearReady()
     }
 
@@ -638,7 +629,6 @@ final class AppModel: ObservableObject {
 
     private let client = UsageClient()
     private var pollTask: Task<Void, Never>?
-    private var keepAliveTask: Task<Void, Never>?
     private var failureStreak = 0
     /// Пауза, которую сами себе назначили, когда claude не отдал лимиты.
     /// Сбрасывается первым же удачным ответом.
@@ -680,14 +670,12 @@ final class AppModel: ObservableObject {
     func refreshStats() { rescanStats(force: true, rebuild: true) }
 
     /// Переключение языка на лету. Строки собираются при отрисовке, поэтому
-    /// достаточно дёрнуть перерисовку, а вот уже посчитанный текст следующего
-    /// пинга приходится пересобрать руками.
+    /// достаточно дёрнуть перерисовку.
     func setLanguage(_ lang: L.Lang) {
         guard L.lang != lang else { return }
         L.lang = lang
         settings.language = lang
         objectWillChange.send()
-        rescheduleKeepAlive()
     }
 
     /// Дочитывает транскрипты и обновляет статистику вместе с тратами.
@@ -759,13 +747,10 @@ final class AppModel: ObservableObject {
         Log.write("app started · v\(currentVersion) \(build)"
                   + " · уведомления \(HookInstaller.isInstalled ? "вкл" : "выкл")"
                   + " · accessibility \(FocusProbe.isTrusted ? "есть" : "нет")"
-                  + " · keep-alive \(settings.keepAliveEnabled ? "вкл" : "выкл")"
                   + " · язык \(L.lang == .ru ? "ru" : "en")"
                   + " · macos \(ProcessInfo.processInfo.operatingSystemVersionString)"
                   + " · экраны \(screens)")
         startPolling()
-        rescheduleKeepAlive()
-        refreshWakeState()
         watchReady()
 
         // Статистику считаем сразу на старте и дальше сами по себе, чтобы к
@@ -808,15 +793,13 @@ final class AppModel: ObservableObject {
             }
         }
 
-        // После пробуждения мака расписание надо пересчитать: пока он спал,
-        // запланированный момент мог пройти.
+        // После сна цифры устарели, обновляем сразу, не дожидаясь очередного опроса.
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
-                Log.write("mac woke up, rescheduling")
+                Log.write("mac woke up")
                 self?.refresh()
-                self?.rescheduleKeepAlive()
             }
         }
     }
@@ -861,7 +844,7 @@ final class AppModel: ObservableObject {
             // 720 одинаковых строк и в логе ничего не найдёшь.
             let digest = fresh.rows.map { "\($0.label) \($0.percent)%" }.joined(separator: ", ")
             if digest != lastDigest {
-                Log.write("fetch ok: \(digest)\(fresh.sessionWindowActive ? "" : " (окна нет)")")
+                Log.write("fetch ok: \(digest)")
                 lastDigest = digest
             }
             snapshot = fresh
@@ -974,19 +957,6 @@ final class AppModel: ObservableObject {
 
     // MARK: - Настройки
 
-    func setAnchor(hour: Int, minute: Int) {
-        settings.anchorHour = hour
-        settings.anchorMinute = minute
-        Log.write("anchor set to \(settings.anchorText)")
-        rescheduleKeepAlive()
-    }
-
-    func setKeepAlive(_ on: Bool) {
-        settings.keepAliveEnabled = on
-        Log.write("keep-alive \(on ? "on" : "off")")
-        rescheduleKeepAlive()
-    }
-
     /// Режим плавающей плашки. Отдельным полем, а не чтением настроек напрямую:
     /// делегат перерисовывает строку по изменениям модели, и переключатель
     /// должен доходить до него сразу.
@@ -1006,99 +976,6 @@ final class AppModel: ObservableObject {
         settings.plaqueMode = mode
         plaqueMode = mode
         Log.write("плашка: режим \(mode.rawValue)")
-    }
-
-    /// Окно с объяснением, зачем нужен будильник и что для него сделать.
-    ///
-    /// Прав приложение не просит вообще: pmset требует рута, а запрос пароля
-    /// из приложения macOS считает поведением малвари и однажды за это снесла
-    /// приложение из /Applications. Поэтому команду выполняет человек.
-    func showWakeHelp() {
-        let cmd = WakeSchedule.command(anchorHour: settings.anchorHour,
-                                       anchorMinute: settings.anchorMinute)
-        let alert = NSAlert()
-        alert.messageText = L.s("Разбудить мак к ночному пингу",
-                                "Wake the mac for the nightly ping")
-        // Собираем построчно: у многострочного литерала с переносами по бэкслешу
-        // отступ следующей строки попадает прямо в текст.
-        let ru = [
-            "Если мак спит, keep-alive не сработает: будить claude некому.",
-            "Штатный способ разбудить мак по расписанию это pmset, ему нужен root.",
-            "",
-            "Приложение прав не просит специально: запрос пароля из приложения macOS",
-            "считает поведением вредоносного ПО и однажды за это удалила приложение,",
-            "хотя подпись и нотаризация были в порядке.",
-            "",
-            "Поэтому вставьте команду в терминал сами, один раз. Она разбудит мак",
-            "к \(settings.anchorText) минус пять часов, то есть к началу окна.",
-            "",
-            "Проверить: pmset -g sched",
-            "Отменить: \(WakeSchedule.cancelCommand)",
-            "",
-            "Слот повтора в системе один: своё расписание, если было, команда заменит.",
-        ].joined(separator: "\n")
-        let en = [
-            "If the mac is asleep, keep-alive can't run: nobody wakes claude.",
-            "The standard way to wake a mac on schedule is pmset, and it needs root.",
-            "",
-            "The app deliberately never asks for privileges: a password prompt coming",
-            "from an app is what macOS treats as malware behaviour, and it once deleted",
-            "this app over exactly that, signature and notarization notwithstanding.",
-            "",
-            "So paste the command in a terminal yourself, once. It wakes the mac five",
-            "hours before \(settings.anchorText), which is when the window starts.",
-            "",
-            "Check with: pmset -g sched",
-            "Cancel with: \(WakeSchedule.cancelCommand)",
-            "",
-            "The system has one repeat slot: this replaces your own schedule if you had one.",
-        ].joined(separator: "\n")
-        // informativeText NSAlert центрирует, и абзацы разъезжаются лестницей.
-        // Поэтому весь текст держим своим полем с выравниванием по левому краю.
-        let width: CGFloat = 470
-        let body = NSTextField(wrappingLabelWithString: L.s(ru, en))
-        body.alignment = .left
-        body.font = .systemFont(ofSize: 12)
-        body.preferredMaxLayoutWidth = width
-        let bodyHeight = body.sizeThatFits(
-            NSSize(width: width, height: .greatestFiniteMagnitude)).height
-
-        // Команду кладём в отдельное поле: её можно выделить мышкой и скопировать
-        // руками, а не только кнопкой.
-        let field = NSTextField(labelWithString: cmd)
-        field.isSelectable = true
-        field.allowsEditingTextAttributes = false
-        field.alignment = .left
-        field.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
-        field.lineBreakMode = .byTruncatingTail
-
-        let gap: CGFloat = 12, fieldHeight: CGFloat = 22
-        let box = NSView(frame: NSRect(x: 0, y: 0, width: width,
-                                       height: bodyHeight + gap + fieldHeight))
-        field.frame = NSRect(x: 0, y: 0, width: width, height: fieldHeight)
-        body.frame = NSRect(x: 0, y: fieldHeight + gap, width: width, height: bodyHeight)
-        box.addSubview(body)
-        box.addSubview(field)
-        alert.accessoryView = box
-
-        alert.addButton(withTitle: L.s("Скопировать команду", "Copy command"))
-        alert.addButton(withTitle: L.s("Закрыть", "Close"))
-
-        NSApp.activate(ignoringOtherApps: true)
-        if alert.runModal() == .alertFirstButtonReturn {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(cmd, forType: .string)
-            Log.write("wake command скопирована: \(cmd)")
-        }
-        refreshWakeState()
-    }
-
-    /// Читает, стоит ли будильник. Без прав, поэтому можно дёргать свободно.
-    func refreshWakeState() {
-        Task.detached(priority: .utility) {
-            let at = WakeSchedule.current()
-            await MainActor.run { [weak self] in self?.wakeAt = at }
-        }
     }
 
     func quit() {
@@ -1124,101 +1001,5 @@ final class AppModel: ObservableObject {
             Log.write("start at login failed: \(error.localizedDescription)")
         }
         startAtLogin = SMAppService.mainApp.status == .enabled
-    }
-
-    // MARK: - Keep-alive
-
-    private func rescheduleKeepAlive() {
-        keepAliveTask?.cancel()
-        guard settings.keepAliveEnabled else {
-            nextPingText = L.s("выключено", "off")
-            return
-        }
-        // Конец идущего окна отодвигает пинг за него: поверх работающего окна
-        // пинг ничего не открывает, а после его конца открывает новое.
-        let planned = Anchor.nextPing(anchorHour: settings.anchorHour,
-                                      anchorMinute: settings.anchorMinute, from: Date())
-        let ping = Anchor.nextPing(anchorHour: settings.anchorHour,
-                                   anchorMinute: settings.anchorMinute,
-                                   from: Date(), windowEndsAt: snapshot?.session?.resetsAt)
-        let hhmm = DateFormatter()
-        hhmm.dateFormat = "HH:mm"
-        nextPingText = hhmm.string(from: ping) + L.s(", через ", ", in ") + Fmt.until(ping)
-        let shifted = ping > planned
-        if shifted, ping != lastShiftLogged {
-            Log.write("окно идёт, пинг сдвинут с \(hhmm.string(from: planned))"
-                      + " на \(hhmm.string(from: ping))")
-            lastShiftLogged = ping
-        }
-
-        // Если до пинга осталось немного, не даём маку заснуть обратно.
-        //
-        // pmset будит его ненадолго: проснулся, ничего срочного не нашёл, снова
-        // спит. Отложенная задача во сне не выполняется, и пинг уходит при
-        // следующем пробуждении. В ночь на 28 июля мак проснулся в 03:43, пинг
-        // должен был уйти в 03:45, а ушёл в 03:56, и окно закрылось на двенадцать
-        // минут позже нужного.
-        // Сдвинутого пинга ждать дольше двадцати минут, а спящий мак его
-        // пропустит до следующего пробуждения по pmset, то есть до завтра.
-        // ponytail: потолок три часа, дальше батарея дороже одного окна.
-        let waking = holdAwakeIfSoon(until: ping, window: shifted ? 3 * 3600 : 20 * 60)
-
-        keepAliveTask = Task { [weak self] in
-            let delay = ping.timeIntervalSinceNow
-            if delay > 0 {
-                try? await Task.sleep(for: .seconds(delay))
-            }
-            defer { if let waking { ProcessInfo.processInfo.endActivity(waking) } }
-            guard !Task.isCancelled else { return }
-            await self?.firePing()
-            self?.rescheduleKeepAlive()
-        }
-    }
-
-    /// Держит мак бодрым до пинга, если тот вот-вот. Возвращает удержание,
-    /// которое надо отпустить, или nil, если ждать ещё долго и держать незачем.
-    private func holdAwakeIfSoon(until ping: Date,
-                                 window: TimeInterval = 20 * 60) -> NSObjectProtocol? {
-        let left = ping.timeIntervalSinceNow
-        guard left > 0, left <= window else { return nil }
-        Log.write("до пинга \(Int(left / 60))м, держу мак бодрым")
-        return ProcessInfo.processInfo.beginActivity(
-            options: [.userInitiated, .idleSystemSleepDisabled],
-            reason: "keep-alive: ждём момент пинга")
-    }
-
-    private func firePing() async {
-        // Пингуем только если окно сейчас не идёт: запущенное окно пинг всё
-        // равно не перезапустит, так что вызов был бы холостым.
-        await fetchOnce()
-        // Считаем от текущего момента, а не по флагу снапшота: протухший снапшот
-        // (когда /usage молчит) держит старый флаг true и после закрытия окна,
-        // из-за чего нужный пинг терялся. Лишний пинг по идущему окну безвреден,
-        // он его не перезапускает, а вот пропуск нужного пинга ломает всё утро.
-        if snapshot?.sessionRunning(at: Date()) == true {
-            // Не пингуем поверх: планировщик ниже по стеку сам перенесёт нас на
-            // конец этого окна и откроет новое уже за ним.
-            Log.write("окно ещё идёт, жду его конца")
-            return
-        }
-        guard let claude = Proc.findClaude() else {
-            Log.write("ping skipped, claude cli not found")
-            return
-        }
-        let result = Pinger.ping(claudePath: claude)
-        switch result {
-        case .success:
-            // Верим не коду возврата, а серверу: окно либо открылось, либо нет.
-            // Иначе в логе будет бодрое "ok" при том, что ничего не произошло.
-            await fetchOnce()
-            if snapshot?.sessionRunning(at: Date()) == true {
-                Log.write("ping ok, окно открыто, сбросится в якорное время")
-            } else {
-                Log.write("ping отработал, но окна на сервере не видно")
-            }
-        case .failure(let msg):
-            Log.write("ping failed: \(msg)")
-            await fetchOnce()
-        }
     }
 }

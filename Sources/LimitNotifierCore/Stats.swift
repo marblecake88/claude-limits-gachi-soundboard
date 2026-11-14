@@ -306,6 +306,9 @@ public enum StatsScanner {
 
             // Поля кэша называются иначе, чем в транскриптах, поэтому
             // перекладываем их в тот вид, который понимает счётчик стоимости.
+            // Тут суммы за всё время, отдельных запросов нет, поэтому ступенчатую
+            // цену выбрать не по чему. В кэше claude таких моделей и нет: он
+            // стоит с августа, а Haiku 5.5 вышла позже.
             guard let prices = Pricing.forModel(model) else { continue }
             let usageForPrice: [String: Any] = [
                 "input_tokens": CostScanner.int(fields["inputTokens"]),
@@ -423,7 +426,7 @@ public enum StatsScanner {
                 day2.tokens += tokens
                     + CostScanner.int(usage["cache_read_input_tokens"])
                     + CostScanner.int(usage["cache_creation_input_tokens"])
-                if let prices = Pricing.forModel(model) {
+                if let prices = Pricing.forModel(model, prompt: CostScanner.promptSize(usage)) {
                     day2.cost[short, default: 0] += CostScanner.price(usage: usage, prices: prices)
                 }
                 totals[day] = day2

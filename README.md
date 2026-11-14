@@ -1,6 +1,6 @@
 # claude limits gachi soundboard
 
-[![release](https://img.shields.io/badge/release-v1.10-ff598c)](https://github.com/marblecake88/claude-limits-gachi-soundboard/releases)
+[![release](https://img.shields.io/badge/release-v1.11-ff598c)](https://github.com/marblecake88/claude-limits-gachi-soundboard/releases)
 [![downloads](https://img.shields.io/github/downloads/marblecake88/claude-limits-gachi-soundboard/total)](https://github.com/marblecake88/claude-limits-gachi-soundboard/releases)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 ![macos](https://img.shields.io/badge/macos-14%2B-black)
@@ -11,15 +11,16 @@
 <img src="docs/marquee.gif" width="408" alt="строка меню прокручивает имена проектов">
 
 Лимиты Claude Code в строке меню мака. Зовёт, когда claude в другом окне закончил работу.
-Будит claude ночью, чтобы к твоему пробуждению было свежее окно. Заодно гачи-саундборд.
+Считает токены и деньги. Заодно гачи-саундборд.
 
 ## что умеет
 
-**Лимиты всегда на виду.** В строке меню `84/34/1h07/4d`: 5-часовое окно, недельный лимит,
-сколько осталось до сброса каждого. Цифры меняют цвет на 60, 79 и 89 процентах, так что
+**Лимиты всегда на виду.** В строке меню `35/4d`: недельный лимит и сколько осталось до
+сброса. Пятичасового окна с ноября больше нет, остались только недельные: общий в строке
+меню, по отдельным моделям в панели. Цифры меняют цвет на 60, 79 и 89 процентах, так что
 край видно не читая. Данные берутся из самого claude, никаких токенов на это не тратится.
 Если время не нужно, в панели есть тумблер «Только проценты», тогда в строке меню просто
-`84/34`.
+`35`.
 
 **Не пропадает, когда в строке меню нет места.** У JetBrains и Xcode меню длинное, и macOS
 молча выкидывает иконки, которые не влезли. Если нас выкинуло, цифры сами переезжают в
@@ -34,11 +35,6 @@
 прокручивает имя проекта: лимиты уезжают влево, за ними едут имена. Клик по имени в панели
 переносит к тому окну, включая переключение рабочего стола. Если ты и так смотришь в это
 окно, приложение молчит.
-
-**Будит claude ночью.** Пятичасовое окно открывается первым запросом, а не по расписанию.
-Значит если начать работать в девять, окно закроется в два, посреди дня. Keep-alive
-поджигает пустое окно заранее, чтобы к нужному тебе часу лимит был полным: работаешь с 8,
-ставишь 9. Если мак спит, приложение подскажет команду для будильника.
 
 **Статистика.** Жмёшь STATS, и панель разъезжается вправо: токены по дням, часам или
 неделям, карта активности за всё время, доли моделей, стрики. Плюс деньги по тарифам API,
@@ -126,14 +122,15 @@ homebrew в конце установки печатает пару команд
 ## English
 
 Claude Code usage limits in the macOS menu bar. Calls you when claude finishes in another
-window. Wakes claude overnight so your window is fresh by morning. Plus a gachi soundboard.
+window. Counts tokens and money. Plus a gachi soundboard.
 
 ### what it does
 
-**Limits always visible.** `84/34/1h07/4d` in the menu bar: the 5-hour window, the weekly
-limit, and time until each resets. Numbers change colour at 60, 79 and 89 percent, so you
-see the edge without reading. Data comes from claude itself and costs no tokens. Don't need
-the times? The "Percent only" switch in the panel leaves just `84/34`.
+**Limits always visible.** `35/4d` in the menu bar: the weekly limit and the time until it
+resets. The 5-hour window is gone since November, only weekly limits are left: the overall one
+in the menu bar, per-model ones in the panel. Numbers change colour at 60, 79 and 89 percent,
+so you see the edge without reading. Data comes from claude itself and costs no tokens. Don't
+need the time? The "Percent only" switch in the panel leaves just `35`.
 
 **Does not disappear when the menu bar runs out of room.** JetBrains IDEs and Xcode have long
 menus, and macOS silently drops the icons that no longer fit. If we get dropped, the numbers
@@ -149,11 +146,6 @@ another. It finishes, waits for you, and you never notice. Turn on READY ALERTS 
 bar scrolls the project name past: limits slide out to the left, names follow. Clicking a
 name in the panel takes you to that window, switching desktops if needed. If you are already
 looking at that window, the app stays quiet.
-
-**Wakes claude overnight.** The 5-hour window opens on your first request, not on a
-schedule, so starting at nine means it closes at two, in the middle of your day. Keep-alive
-burns an empty window early, so the limit is full by the hour you choose: start at 8, set 9.
-If your mac sleeps, the app hands you the command for a wake timer.
 
 **Statistics.** Hit STATS and the panel expands to the right: tokens per day, hour or week,
 an activity map for all time, model shares, streaks. Plus spend at API rates for today, the

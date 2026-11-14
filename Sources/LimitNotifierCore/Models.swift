@@ -25,10 +25,9 @@ public struct LimitRow: Identifiable, Sendable, Equatable {
     public let severity: Severity
     public let resetsAt: Date?
     public let group: String
-    public let isSession: Bool
 
     public init(id: String, kind: String = "", label: String, percent: Int, severity: Severity,
-                resetsAt: Date?, group: String, isSession: Bool) {
+                resetsAt: Date?, group: String) {
         self.id = id
         self.kind = kind
         self.label = label
@@ -36,7 +35,6 @@ public struct LimitRow: Identifiable, Sendable, Equatable {
         self.severity = severity
         self.resetsAt = resetsAt
         self.group = group
-        self.isSession = isSession
     }
 }
 
@@ -55,29 +53,24 @@ public enum Level: String, Sendable, Equatable {
     }
 }
 
+/// Снимок лимитов.
+///
+/// Пятичасового окна с 1 ноября 2026 нет: /usage отдаёт только недельные, общий
+/// и скоупные по моделям. Если оно однажды вернётся, ряд просто появится в
+/// панели ещё одним гейджем, ряды целиком задаёт сервер.
 public struct UsageSnapshot: Sendable, Equatable {
     public let rows: [LimitRow]
     public let fetchedAt: Date
-    /// Идёт ли прямо сейчас 5-часовое окно. Определяется наличием `five_hour`
-    /// в ответе и тем, что его resets_at ещё не наступил.
-    public let sessionWindowActive: Bool
 
-    public init(rows: [LimitRow], fetchedAt: Date, sessionWindowActive: Bool) {
+    public init(rows: [LimitRow], fetchedAt: Date) {
         self.rows = rows
         self.fetchedAt = fetchedAt
-        self.sessionWindowActive = sessionWindowActive
     }
 
-    public var session: LimitRow? { rows.first(where: \.isSession) }
-    public var weekly: [LimitRow] { rows.filter { !$0.isSession } }
-
-    /// Идёт ли сессионное окно на переданный момент. Считаем от now, а не по
-    /// флагу sessionWindowActive: тот заморожен в момент замера. Если /usage
-    /// перестал отвечать и снапшот протух, старый флаг остаётся true и после
-    /// закрытия окна, из-за чего утренний пинг решал что окно идёт, и пропускал
-    /// его. По resetsAt против now протухшее окно честно считается закрытым.
-    public func sessionRunning(at now: Date) -> Bool {
-        session?.resetsAt.map { $0 > now } ?? false
+    /// Общий недельный лимит, по всем моделям. Именно он стоит в строке меню,
+    /// скоупные видно в панели. Если общего почему-то нет, берём первый.
+    public var main: LimitRow? {
+        rows.first { $0.kind == "weekly_all" } ?? rows.first
     }
 }
 
@@ -154,41 +147,23 @@ public enum Gauge {
 
 // MARK: - Строка меню
 
-/// Куски статус-элемента вида 55/78/2h15, каждый со своей серьёзностью,
-/// чтоб красить их по отдельности. Собирать строку целиком тут нельзя:
-/// цвет накладывается уже во вьюхе.
+/// Куски статус-элемента вида 35/4d, каждый со своим цветом. Собирать строку
+/// целиком тут нельзя: цвет накладывается уже во вьюхе.
 public struct StatusParts: Sendable, Equatable {
-    public let session: String
     public let weekly: String
-    public let time: String
-    /// Сколько осталось до сброса недельного лимита, крупно: "4d" или "11h".
-    /// Минуты тут не нужны, на таком горизонте они только шумят.
+    /// Сколько осталось до сброса, крупно: "4d" или "11h". Минуты тут не
+    /// нужны, на недельном горизонте они только шумят.
     public let weeklyTime: String
-    public let sessionLevel: Level
     public let weeklyLevel: Level
 
-    public init(session: String, weekly: String, time: String, weeklyTime: String = "--",
-                sessionLevel: Level, weeklyLevel: Level) {
-        self.session = session
+    public init(weekly: String, weeklyTime: String, weeklyLevel: Level) {
         self.weekly = weekly
-        self.time = time
         self.weeklyTime = weeklyTime
-        self.sessionLevel = sessionLevel
         self.weeklyLevel = weeklyLevel
     }
 }
 
 public enum StatusBar {
-    /// Остаток времени в сжатом виде: "2h15" от часа и выше, "15m" ниже часа.
-    /// Секунды не показываем, дёргающаяся строка в меню это раздражитель.
-    public static func compact(_ date: Date?, from now: Date = Date()) -> String {
-        guard let date else { return "--" }
-        let s = Int(date.timeIntervalSince(now))
-        if s <= 0 { return "--" }
-        let h = s / 3600, m = (s % 3600) / 60
-        return h > 0 ? String(format: "%dh%02d", h, m) : "\(m)m"
-    }
-
     /// Остаток крупными единицами: от суток и выше только дни, ниже только часы.
     /// Недельный лимит живёт днями, и минуты в строке меню там ни к чему.
     public static func coarse(_ date: Date?, from now: Date = Date()) -> String {
@@ -200,24 +175,10 @@ public enum StatusBar {
     }
 
     public static func parts(from snapshot: UsageSnapshot?, now: Date = Date()) -> StatusParts {
-        guard let snapshot else {
-            return StatusParts(session: "--", weekly: "--", time: "--", weeklyTime: "--",
-                               sessionLevel: .calm, weeklyLevel: .calm)
-        }
-        let session = snapshot.session
-        // Недельных лимитов бывает несколько: общий weekly_all и скоупные по
-        // модели. В строку меню ставим именно общий, скоупные видно в панели.
-        let weekly = snapshot.weekly.first { $0.kind == "weekly_all" }
-            ?? snapshot.weekly.first
-
-        return StatusParts(
-            session: session.map { "\($0.percent)" } ?? "--",
-            weekly: weekly.map { "\($0.percent)" } ?? "--",
-            time: compact(snapshot.sessionWindowActive ? session?.resetsAt : nil, from: now),
-            weeklyTime: coarse(weekly?.resetsAt, from: now),
-            sessionLevel: Level(percent: session?.percent ?? 0),
-            weeklyLevel: Level(percent: weekly?.percent ?? 0)
-        )
+        let main = snapshot?.main
+        return StatusParts(weekly: main.map { "\($0.percent)" } ?? "--",
+                           weeklyTime: coarse(main?.resetsAt, from: now),
+                           weeklyLevel: Level(percent: main?.percent ?? 0))
     }
 }
 
@@ -263,10 +224,9 @@ public enum PollPlan {
         // Сеть лежит или токен протух: не долбим.
         if failureStreak >= 3 { return 900 }
         guard let snapshot else { return 300 }
-        // Окна нет, проценты стоят на месте.
-        guard snapshot.sessionWindowActive else { return 900 }
-        // Близко к лимиту, тут точность важнее экономии запросов.
-        if (snapshot.session?.percent ?? 0) >= 79 { return 120 }
+        // Близко к лимиту, тут точность важнее экономии запросов. Смотрим на
+        // самый горячий из рядов: скоупный по модели может упереться раньше.
+        if (snapshot.rows.map(\.percent).max() ?? 0) >= 79 { return 120 }
         return 600
     }
 

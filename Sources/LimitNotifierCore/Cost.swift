@@ -9,41 +9,70 @@ import Foundation
 public struct Prices: Sendable, Equatable {
     public let input: Double
     public let output: Double
+    /// Во сколько от input обходится чтение из кэша. У большинства моделей 0.1,
+    /// но у новых меньше: у Opus 5.5 и Sonnet 5.5 0.05, у Fable 5.1 и 5.2 0.025.
+    /// Чтение кэша это 99% объёма, так что ошибка тут умножается на всё.
+    public let cacheHit: Double
 
-    public init(input: Double, output: Double) {
+    public init(input: Double, output: Double, cacheHit: Double = 0.1) {
         self.input = input
         self.output = output
+        self.cacheHit = cacheHit
     }
 
     /// Запись в кэш на час стоит 2x от input, на 5 минут 1.25x.
     public var cacheWrite1h: Double { input * 2 }
     public var cacheWrite5m: Double { input * 1.25 }
-    /// Чтение из кэша стоит 0.1x от input.
-    public var cacheRead: Double { input * 0.1 }
+    public var cacheRead: Double { input * cacheHit }
 }
 
 public enum Pricing {
-    /// Сверено с документацией на 2026-07-24. Ключ это префикс id модели.
-    /// Старые модели, по которым у меня нет подтверждённой цены, сюда не
-    /// внесены намеренно: лучше показать их в списке неизвестных, чем выдумать.
-    ///
-    /// Порядок важен: ищем по первому совпавшему префиксу, поэтому claude-opus-5
-    /// стоит раньше claude-opus-4-*, а не наоборот.
-    public static let table: [(prefix: String, prices: Prices)] = [
-        ("claude-fable-5",   Prices(input: 10, output: 50)),
-        ("claude-mythos-5",  Prices(input: 10, output: 50)),
-        ("claude-opus-5",    Prices(input: 5,  output: 25)),
-        ("claude-opus-4-8",  Prices(input: 5,  output: 25)),
-        ("claude-opus-4-7",  Prices(input: 5,  output: 25)),
-        ("claude-opus-4-6",  Prices(input: 5,  output: 25)),
-        // Вводная цена Sonnet 5 действует по 31 августа 2026, потом станет 3/15.
-        ("claude-sonnet-5",  Prices(input: 2,  output: 10)),
-        ("claude-sonnet-4-6", Prices(input: 3, output: 15)),
-        ("claude-haiku-4-5", Prices(input: 1,  output: 5)),
+    /// Сверено с platform.claude.com/docs/en/about-claude/pricing на 2026-11-14.
+    /// Модели, по которым у меня нет подтверждённой цены, сюда не внесены
+    /// намеренно: лучше показать их в списке неизвестных, чем выдумать.
+    public static let table: [(model: String, prices: Prices)] = [
+        ("claude-fable-5-2",  Prices(input: 8,  output: 40, cacheHit: 0.025)),
+        ("claude-fable-5-1",  Prices(input: 10, output: 50, cacheHit: 0.025)),
+        ("claude-fable-5",    Prices(input: 10, output: 50)),
+        ("claude-mythos-5-2", Prices(input: 8,  output: 40, cacheHit: 0.025)),
+        ("claude-mythos-5-1", Prices(input: 10, output: 50, cacheHit: 0.025)),
+        ("claude-mythos-5",   Prices(input: 10, output: 50)),
+        ("claude-opus-5-5",   Prices(input: 4,  output: 20, cacheHit: 0.05)),
+        ("claude-opus-5",     Prices(input: 5,  output: 25)),
+        ("claude-opus-4-8",   Prices(input: 5,  output: 25)),
+        ("claude-opus-4-7",   Prices(input: 5,  output: 25)),
+        ("claude-opus-4-6",   Prices(input: 5,  output: 25)),
+        ("claude-sonnet-5-5", Prices(input: 2,  output: 10, cacheHit: 0.05)),
+        // Вводная цена Sonnet 5 стала постоянной, подорожания с 1 сентября не было.
+        ("claude-sonnet-5",   Prices(input: 2,  output: 10)),
+        ("claude-sonnet-4-6", Prices(input: 3,  output: 15)),
+        ("claude-haiku-5-5",  Prices(input: 0.10, output: 0.50)),
+        ("claude-haiku-4-5",  Prices(input: 1,  output: 5)),
     ]
 
-    public static func forModel(_ id: String) -> Prices? {
-        table.first { id.hasPrefix($0.prefix) }?.prices
+    /// Haiku 5.5 считается ступенькой: промпт больше 100k токенов в пять раз
+    /// дороже. У Claude Code контекст почти всегда больше, так что это не
+    /// мелочь, а основной случай.
+    static let haikuLong = Prices(input: 0.50, output: 2.50)
+
+    /// `prompt` это полный размер промпта запроса: вход плюс кэш.
+    public static func forModel(_ id: String, prompt: Int = 0) -> Prices? {
+        if matches(id, "claude-haiku-5-5"), prompt > 100_000 { return haikuLong }
+        return table.first { matches(id, $0.model) }?.prices
+    }
+
+    /// Та же модель, а не следующая её версия.
+    ///
+    /// Раньше искали по префиксу, и claude-opus-5 подходил к claude-opus-5-5:
+    /// новая модель молча считалась по цене старой, вместо того чтобы попасть
+    /// в список неизвестных. Так Opus 5.5 месяц шёл по ставкам Opus 5, а это
+    /// почти вдвое дороже из-за кэша. Теперь после имени допускается только
+    /// пометка контекста ("[1m]") или дата сборки ("-20251001").
+    static func matches(_ id: String, _ model: String) -> Bool {
+        guard id.hasPrefix(model) else { return false }
+        let rest = id.dropFirst(model.count)
+        if rest.isEmpty || rest.hasPrefix("[") { return true }
+        return rest.count == 9 && rest.first == "-" && rest.dropFirst().allSatisfy(\.isNumber)
     }
 }
 
@@ -118,7 +147,7 @@ public enum CostScanner {
                       let at = iso(stamp), at >= weekAgo
                 else { return }
 
-                guard let prices = Pricing.forModel(model) else {
+                guard let prices = Pricing.forModel(model, prompt: promptSize(usage)) else {
                     // Записи с нулевым usage (служебный <synthetic> и подобные)
                     // в список неизвестных не тащим: считать там нечего, а в
                     // панели это выглядело бы как потерянные деньги.
@@ -149,7 +178,11 @@ public enum CostScanner {
         let write1h = breakdown.map { int($0["ephemeral_1h_input_tokens"]) } ?? cacheTotal
         let write5m = breakdown.map { int($0["ephemeral_5m_input_tokens"]) } ?? 0
 
-        return (Double(input) * prices.input
+        // Быстрый режим стоит ровно вдвое дороже обычного, у всех моделей, где
+        // он есть. Признак лежит прямо в usage.
+        let fast = (usage["speed"] as? String) == "fast" ? 2.0 : 1.0
+
+        return fast * (Double(input) * prices.input
                 + Double(output) * prices.output
                 + Double(cacheRead) * prices.cacheRead
                 + Double(write1h) * prices.cacheWrite1h
@@ -157,6 +190,13 @@ public enum CostScanner {
     }
 
     // MARK: - Мелочи
+
+    /// Полный размер промпта запроса: вход плюс прочитанное и записанное в кэш.
+    /// По нему выбирается ступенька цены там, где она есть.
+    public static func promptSize(_ usage: [String: Any]) -> Int {
+        int(usage["input_tokens"]) + int(usage["cache_read_input_tokens"])
+            + int(usage["cache_creation_input_tokens"])
+    }
 
     static func hasTokens(_ usage: [String: Any]) -> Bool {
         int(usage["input_tokens"]) + int(usage["output_tokens"])

@@ -27,6 +27,14 @@ public struct ScanState: Codable, Sendable {
     /// надо знать по логу, а не гадать, почему сумма занижена.
     public var unknownModels: [String] = []
     public var scannedAt = Date(timeIntervalSince1970: 0)
+    /// По какой таблице цен посчитаны деньги в totals.
+    ///
+    /// Деньги копятся, а дочитывание считает только новые строки: поменяй цены,
+    /// и старые дни так и останутся по старым. Поэтому при каждой правке
+    /// Pricing.table номер поднимается, и состояние с чужим номером считается
+    /// заново целиком. Файлы без номера, из версий до 1.11, тоже.
+    public var pricing = ScanState.currentPricing
+    public static let currentPricing = 2
 
     public init() {}
 
@@ -124,7 +132,7 @@ public struct ScanState: Codable, Sendable {
         totalsForDay.tokens += tokens
             + CostScanner.int(usage["cache_read_input_tokens"])
             + CostScanner.int(usage["cache_creation_input_tokens"])
-        if let prices = Pricing.forModel(model) {
+        if let prices = Pricing.forModel(model, prompt: CostScanner.promptSize(usage)) {
             totalsForDay.cost[short, default: 0] += CostScanner.price(usage: usage, prices: prices)
         } else if !unknownModels.contains(model) {
             unknownModels.append(model)
@@ -181,8 +189,11 @@ public struct ScanState: Codable, Sendable {
     }
 
     public static func read(_ url: URL = defaultURL) -> ScanState? {
-        guard let data = try? Data(contentsOf: url) else { return nil }
-        return try? JSONDecoder().decode(ScanState.self, from: data)
+        guard let data = try? Data(contentsOf: url),
+              let state = try? JSONDecoder().decode(ScanState.self, from: data),
+              state.pricing == currentPricing
+        else { return nil }
+        return state
     }
 
     public func write(to url: URL = defaultURL) {

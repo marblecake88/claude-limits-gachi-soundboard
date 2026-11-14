@@ -169,8 +169,26 @@ struct SeverityTests {
 
 // MARK: - Разбор ответа API
 
-/// Записанный живьём вывод `claude -p "/usage"`. Эталон, менять можно только
-/// после нового реального запуска.
+/// Записанный живьём вывод `claude -p "/usage"` от 14 ноября 2026. Эталон,
+/// менять можно только после нового реального запуска. Пятичасового окна тут
+/// уже нет: с 1 ноября /usage отдаёт только недельные лимиты.
+let novemberOutput = """
+You are currently using your subscription to power your Claude Code usage
+
+Current week (all models): 1% used · resets Nov 21 at 1am (Asia/Bangkok)
+Current week (Fable): 0% used · resets Nov 21 at 1am (Asia/Bangkok)
+
+What's contributing to your limits usage?
+Approximate, based on local sessions on this machine — does not include other devices or claude.ai. Behaviors are independent characteristics, not a breakdown.
+
+Last 24h · 276 requests · 4 sessions
+  77% of your usage was at >150k context
+  41% of your usage came from subagent-heavy sessions
+  Top subagents: workflow-subagent 30%
+"""
+
+/// Июльский вывод, ещё с пятичасовым окном. Держим затем, чтобы вернись эта
+/// строка однажды, разбор её не уронил.
 let realOutput = """
 You are currently using your subscription to power your Claude Code usage
 
@@ -191,12 +209,23 @@ struct ParseTests {
     /// Момент незадолго до сброса сессии из эталона.
     private let now = utc(2026, 7, 22, 12, 0)
 
-    @Test("Эталонный вывод: три окна в порядке появления")
+    @Test("Ноябрьский вывод: пятичасового нет, два недельных")
+    func novemberRows() throws {
+        let snap = try #require(UsageClient.parse(novemberOutput, now: utc(2026, 11, 14, 1, 0)))
+        #expect(snap.rows.map(\.kind) == ["weekly_all", "weekly_scoped"])
+        #expect(snap.rows.map(\.label) == ["Weekly", "Fable weekly"])
+        #expect(snap.rows.map(\.percent) == [1, 0])
+        #expect(snap.main?.kind == "weekly_all")
+        // Сброс 21 ноября в час ночи по Бангкоку это 20 ноября 18:00 UTC.
+        let reset = try #require(snap.main?.resetsAt)
+        #expect(abs(reset.timeIntervalSince(utc(2026, 11, 20, 18, 0))) < 60)
+    }
+
+    @Test("Старый вывод с пятичасовым окном тоже разбирается")
     func realRows() throws {
         let snap = try #require(UsageClient.parse(realOutput, now: now))
         #expect(snap.rows.count == 3)
         #expect(snap.rows.map(\.percent) == [26, 83, 88])
-        #expect(snap.rows.map(\.isSession) == [true, false, false])
         #expect(snap.rows.map(\.kind) == ["session", "weekly_all", "weekly_scoped"])
         #expect(snap.rows.map(\.label) == ["5h", "Weekly", "Fable weekly"])
         // id уходит в ForEach, дубликаты ломают отрисовку.
@@ -239,27 +268,6 @@ struct ParseTests {
         #expect(snap.rows.allSatisfy { $0.resetsAt != nil })
     }
 
-    @Test("Окно активно, пока сброс впереди")
-    func windowActive() throws {
-        let before = try #require(UsageClient.parse(realOutput, now: utc(2026, 7, 22, 12, 0)))
-        #expect(before.sessionWindowActive)
-        // После сброса окно уже не идёт.
-        let after = try #require(UsageClient.parse(realOutput, now: utc(2026, 7, 22, 20, 0)))
-        #expect(after.sessionWindowActive == false)
-    }
-
-    /// Регресс: ночной пинг не должен пропускаться по протухшему снапшоту.
-    /// Снимок сделан в 12:00 (окно идёт, сброс в 19:10 UTC), а /usage потом
-    /// перестал отвечать и снимок завис. Замороженный флаг так и остаётся true,
-    /// но решение о пинге считается от текущего момента и после сброса даёт false.
-    @Test("Протухший снапшот: окно закрыто, если сброс уже прошёл")
-    func staleWindowByTime() throws {
-        let stale = try #require(UsageClient.parse(realOutput, now: utc(2026, 7, 22, 12, 0)))
-        #expect(stale.sessionWindowActive)                              // флаг заморожен на true
-        #expect(stale.sessionRunning(at: utc(2026, 7, 22, 12, 0)))      // в момент замера окно идёт
-        #expect(stale.sessionRunning(at: utc(2026, 7, 22, 20, 0)) == false) // за сбросом закрыто
-    }
-
     /// Проценты бывают дробные, а порядок строк может поменяться.
     @Test("Дробные проценты и произвольный порядок")
     func lenient() throws {
@@ -269,7 +277,8 @@ struct ParseTests {
         """
         let snap = try #require(UsageClient.parse(text, now: now))
         #expect(snap.rows.map(\.percent) == [42, 0])
-        #expect(snap.session?.percent == 0)
+        // В строку меню идёт общий недельный, даже если он не первый.
+        #expect(snap.main?.percent == 42)
     }
 
     @Test("Ошибки различаются по смыслу")
@@ -326,63 +335,35 @@ struct ParseTests {
 
 // MARK: - Строка меню
 
-@Suite("Строка меню 55/78/2h15")
+@Suite("Строка меню 35/4d")
 struct StatusBarTests {
 
-    @Test("Час и больше: часы плюс минуты с нулём")
-    func hours() {
-        let now = Date(timeIntervalSince1970: 1_000_000)
-        #expect(StatusBar.compact(now.addingTimeInterval(2 * 3600 + 15 * 60), from: now) == "2h15")
-        // Ведущий ноль обязателен, иначе 2h5 читается как два с половиной часа.
-        #expect(StatusBar.compact(now.addingTimeInterval(2 * 3600 + 5 * 60), from: now) == "2h05")
-        #expect(StatusBar.compact(now.addingTimeInterval(3600), from: now) == "1h00")
+    @Test("Ноябрьский вывод разбирается в куски строки меню")
+    func partsFromNovember() throws {
+        let now = utc(2026, 11, 14, 1, 0)
+        let snap = try #require(UsageClient.parse(novemberOutput, now: now))
+        let p = StatusBar.parts(from: snap, now: now)
+        #expect(p.weekly == "1")
+        #expect(p.weeklyTime == "6d")
+        #expect(p.weeklyLevel == Level.calm)
     }
 
-    @Test("Меньше часа: только минуты")
-    func minutes() {
-        let now = Date(timeIntervalSince1970: 1_000_000)
-        #expect(StatusBar.compact(now.addingTimeInterval(15 * 60), from: now) == "15m")
-        #expect(StatusBar.compact(now.addingTimeInterval(59 * 60 + 59), from: now) == "59m")
-        #expect(StatusBar.compact(now.addingTimeInterval(60), from: now) == "1m")
-    }
-
-    @Test("Нет даты, ноль и прошедшее время дают прочерк")
-    func noTime() {
-        let now = Date(timeIntervalSince1970: 1_000_000)
-        #expect(StatusBar.compact(nil, from: now) == "--")
-        #expect(StatusBar.compact(now, from: now) == "--")
-        #expect(StatusBar.compact(now.addingTimeInterval(-3600), from: now) == "--")
-    }
-
-    @Test("Эталонный ответ разбирается в куски строки меню")
-    func partsFromRealPayload() throws {
-        let snap = try #require(UsageClient.parse(realOutput, now: utc(2026, 7, 22, 12, 0)))
-        let p = StatusBar.parts(from: snap, now: utc(2026, 7, 22, 12, 0))
-
-        #expect(p.session == "26")
-        // Берём общий недельный weekly_all, а не скоупный по модели.
+    /// Вернись пятичасовое окно, в строку меню всё равно идёт общий недельный:
+    /// строка меню рассчитана на один процент и одно время.
+    @Test("Строка про сессию строку меню не перехватывает")
+    func sessionRowIgnored() throws {
+        let now = utc(2026, 7, 22, 12, 0)
+        let snap = try #require(UsageClient.parse(realOutput, now: now))
+        let p = StatusBar.parts(from: snap, now: now)
         #expect(p.weekly == "83")
         #expect(p.weeklyLevel == Level.pink)
-        #expect(p.sessionLevel == Level.calm)
-        #expect(p.time == "7h10")
     }
 
     @Test("Без снимка всё прочерки")
     func noSnapshot() {
         let p = StatusBar.parts(from: nil, now: Date())
-        #expect(p.session == "--")
         #expect(p.weekly == "--")
-        #expect(p.time == "--")
-    }
-
-    /// Окна нет, значит и обратного отсчёта нет, а проценты всё равно есть.
-    @Test("Окно неактивно: время прочерк, проценты остаются")
-    func inactiveWindow() throws {
-        let snap = try #require(UsageClient.parse(realOutput, now: utc(2026, 7, 22, 20, 0)))
-        let p = StatusBar.parts(from: snap, now: utc(2026, 7, 22, 16, 0))
-        #expect(p.time == "--")
-        #expect(p.session == "26")
-        #expect(p.weekly == "83")
+        #expect(p.weeklyTime == "--")
     }
 }
 
@@ -403,116 +384,6 @@ struct LevelTests {
         #expect(Level(percent: 88) == .pink)
         #expect(Level(percent: 89) == .red)
         #expect(Level(percent: 100) == .red)
-    }
-}
-
-// MARK: - Якорь keep-alive
-
-@Suite("Математика якоря")
-struct AnchorTests {
-
-    private let cal = fixedCalendar()
-
-    /// База это якорь минус 5 часов. Якорь 09:00, база 04:00.
-    @Test("Якорь 09:00, сейчас полдень: пинг завтра в 04:00")
-    func anchorNineFromNoon() {
-        let ping = Anchor.nextPing(anchorHour: 9, anchorMinute: 0,
-                                   from: local(2026, 7, 22, 12, 0), calendar: cal)
-        #expect(ping == local(2026, 7, 23, 4, 0))
-    }
-
-    @Test("Якорь 09:00, сейчас 02:00: пинг сегодня в 04:00")
-    func anchorNineFromNight() {
-        let ping = Anchor.nextPing(anchorHour: 9, anchorMinute: 0,
-                                   from: local(2026, 7, 22, 2, 0), calendar: cal)
-        #expect(ping == local(2026, 7, 22, 4, 0))
-    }
-
-    /// Якорь 03:00 отматывается через полночь назад, база 22:00 предыдущих суток.
-    @Test("Якорь 03:00: база 22:00, ближайший пинг сегодня вечером")
-    func anchorThreeCrossesMidnight() {
-        let ping = Anchor.nextPing(anchorHour: 3, anchorMinute: 0,
-                                   from: local(2026, 7, 22, 12, 0), calendar: cal)
-        #expect(ping == local(2026, 7, 22, 22, 0))
-    }
-
-    @Test("Якорь 03:00, сейчас 23:00: пинг завтра в 22:00")
-    func anchorThreeAfterBase() {
-        let ping = Anchor.nextPing(anchorHour: 3, anchorMinute: 0,
-                                   from: local(2026, 7, 22, 23, 0), calendar: cal)
-        #expect(ping == local(2026, 7, 23, 22, 0))
-    }
-
-    @Test("Якорь 00:00: база 19:00")
-    func anchorMidnight() {
-        #expect(Anchor.nextPing(anchorHour: 0, anchorMinute: 0,
-                                from: local(2026, 7, 22, 12, 0), calendar: cal)
-                == local(2026, 7, 22, 19, 0))
-        #expect(Anchor.nextPing(anchorHour: 0, anchorMinute: 0,
-                                from: local(2026, 7, 22, 20, 0), calendar: cal)
-                == local(2026, 7, 23, 19, 0))
-    }
-
-    @Test("Сброс наступает ровно через 5 часов после пинга")
-    func resetIsFiveHoursLater() {
-        let ping = local(2026, 7, 22, 4, 0)
-        #expect(Anchor.resetAfter(ping: ping) == ping.addingTimeInterval(5 * 3600))
-    }
-
-    /// Свойство, ради которого вся фича и существует: пингуем в nextPing,
-    /// значит окно сбрасывается ровно в якорное время.
-    @Test("Круговой прогон: пинг плюс окно попадает в якорь",
-          arguments: [(0, 0), (3, 0), (4, 30), (9, 0), (12, 15), (23, 45)])
-    func roundTrip(anchor: (hour: Int, minute: Int)) {
-        for now in [local(2026, 7, 22, 0, 30),
-                    local(2026, 7, 22, 12, 0),
-                    local(2026, 7, 22, 23, 50)] {
-            let ping = Anchor.nextPing(anchorHour: anchor.hour, anchorMinute: anchor.minute,
-                                       from: now, calendar: cal)
-            #expect(ping > now, "якорь \(anchor), сейчас \(now)")
-
-            let reset = Anchor.resetAfter(ping: ping)
-            let parts = cal.dateComponents([.hour, .minute], from: reset)
-            #expect(parts.hour == anchor.hour, "якорь \(anchor), сейчас \(now)")
-            #expect(parts.minute == anchor.minute, "якорь \(anchor), сейчас \(now)")
-        }
-    }
-
-    /// Ночь на 4 августа: окно открылось в 23:48 и шло до 04:48, плановый пинг
-    /// в 04:00 приходился на него. Раньше пинг просто терялся, теперь съезжает
-    /// за конец окна.
-    @Test("Идущее окно сдвигает пинг за свой конец")
-    func windowShiftsPing() {
-        let end = local(2026, 8, 4, 4, 48)
-        let ping = Anchor.nextPing(anchorHour: 9, anchorMinute: 0,
-                                   from: local(2026, 8, 4, 0, 30), calendar: cal,
-                                   windowEndsAt: end, gap: 60)
-        #expect(ping == end.addingTimeInterval(60))
-    }
-
-    @Test("Окно кончается до планового пинга: время не трогаем")
-    func windowEndingEarlyKeepsPing() {
-        let ping = Anchor.nextPing(anchorHour: 9, anchorMinute: 0,
-                                   from: local(2026, 8, 4, 0, 30), calendar: cal,
-                                   windowEndsAt: local(2026, 8, 4, 3, 0))
-        #expect(ping == local(2026, 8, 4, 4, 0))
-    }
-
-    @Test("Протухшее окно в прошлом пинг не двигает")
-    func staleWindowKeepsPing() {
-        let ping = Anchor.nextPing(anchorHour: 9, anchorMinute: 0,
-                                   from: local(2026, 8, 4, 0, 30), calendar: cal,
-                                   windowEndsAt: local(2026, 8, 3, 22, 0))
-        #expect(ping == local(2026, 8, 4, 4, 0))
-    }
-
-    /// Ближайший пинг всегда в пределах суток, иначе расписание разъехалось.
-    @Test("Пинг не дальше суток вперёд", arguments: [(0, 0), (9, 0), (23, 45)])
-    func pingWithinADay(anchor: (hour: Int, minute: Int)) {
-        let now = local(2026, 7, 22, 12, 0)
-        let ping = Anchor.nextPing(anchorHour: anchor.hour, anchorMinute: anchor.minute,
-                                   from: now, calendar: cal)
-        #expect(ping.timeIntervalSince(now) <= 24 * 3600 + 1, "якорь \(anchor)")
     }
 }
 
@@ -693,6 +564,77 @@ struct CostTests {
     }
 }
 
+@Suite("Тарифы новых моделей")
+struct PricingTests {
+
+    /// Регресс: по префиксу claude-opus-5 подходил к claude-opus-5-5, и основная
+    /// модель месяц считалась по ставкам Opus 5. Следующая версия должна
+    /// попадать в неизвестные, а не молча брать цену соседа.
+    @Test("Модель находится целиком, а не по префиксу")
+    func exactMatch() {
+        #expect(Pricing.forModel("claude-opus-5-5")?.input == 4)
+        #expect(Pricing.forModel("claude-opus-5")?.input == 5)
+        #expect(Pricing.forModel("claude-fable-5-1")?.cacheRead == 0.25)
+        // Ещё не вышедшая версия не должна получить чужую цену.
+        #expect(Pricing.forModel("claude-opus-5-6") == nil)
+        #expect(Pricing.forModel("claude-fable-5-3") == nil)
+        // Пометка контекста и дата сборки это та же модель.
+        #expect(Pricing.forModel("claude-opus-5-5[1m]")?.input == 4)
+        #expect(Pricing.forModel("claude-haiku-4-5-20251001")?.input == 1)
+        // Алиас без версии ценой не обладает.
+        #expect(Pricing.forModel("sonnet") == nil)
+    }
+
+    /// Чтение кэша это почти весь объём, и у новых моделей оно дешевле.
+    @Test("Чтение кэша по своему множителю у каждой модели")
+    func cacheHitMultipliers() {
+        #expect(Pricing.forModel("claude-opus-5-5")?.cacheRead == 0.20)
+        #expect(Pricing.forModel("claude-sonnet-5-5")?.cacheRead == 0.10)
+        #expect(Pricing.forModel("claude-fable-5-2")?.cacheRead == 0.20)
+        // У старых прежние 10%.
+        #expect(Pricing.forModel("claude-opus-5")?.cacheRead == 0.5)
+        #expect(Pricing.forModel("claude-fable-5")?.cacheRead == 1)
+    }
+
+    @Test("Haiku 5.5 дороже на промптах больше 100k")
+    func haikuTier() {
+        #expect(Pricing.forModel("claude-haiku-5-5", prompt: 50_000)?.input == 0.10)
+        #expect(Pricing.forModel("claude-haiku-5-5", prompt: 100_000)?.input == 0.10)
+        #expect(Pricing.forModel("claude-haiku-5-5", prompt: 150_000)?.input == 0.50)
+        #expect(Pricing.forModel("claude-haiku-5-5", prompt: 150_000)?.output == 2.50)
+    }
+
+    @Test("Быстрый режим ровно вдвое дороже")
+    func fastMode() {
+        let prices = Prices(input: 4, output: 20, cacheHit: 0.05)
+        let usage: [String: Any] = ["input_tokens": 1_000_000, "output_tokens": 1_000_000,
+                                    "cache_read_input_tokens": 1_000_000]
+        var fast = usage
+        fast["speed"] = "fast"
+        let normal = CostScanner.price(usage: usage, prices: prices)
+        #expect(abs(normal - 24.2) < 0.0001)
+        #expect(abs(CostScanner.price(usage: fast, prices: prices) - normal * 2) < 0.0001)
+    }
+
+    /// Деньги копятся, и после правки цен старые дни остались бы по старым.
+    /// Состояние с чужой версией цен должно считаться заново.
+    @Test("Состояние со старой таблицей цен пересчитывается")
+    func stalePricingRebuilds() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pricing-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        var state = ScanState()
+        state.days["2026-07-30"] = ["Opus 5": 7]
+        state.write(to: url)
+        #expect(ScanState.read(url) != nil)
+
+        state.pricing = ScanState.currentPricing - 1
+        state.write(to: url)
+        #expect(ScanState.read(url) == nil)
+    }
+}
+
 @Suite("Нулевые записи usage")
 struct EmptyUsageTests {
     /// Служебные записи вроде <synthetic> не должны попадать в список
@@ -739,20 +681,19 @@ struct UpdateCheckTests {
 @Suite("Частота опроса")
 struct PollPlanTests {
 
-    private func snap(percent: Int, active: Bool) -> UsageSnapshot {
+    private func snap(percent: Int, kind: String = "weekly_all") -> UsageSnapshot {
         UsageSnapshot(
-            rows: [LimitRow(id: "session", kind: "session", label: "5h",
+            rows: [LimitRow(id: kind, kind: kind, label: "Weekly",
                             percent: percent, severity: .normal, resetsAt: nil,
-                            group: "session", isSession: true)],
-            fetchedAt: Date(),
-            sessionWindowActive: active
+                            group: "weekly")],
+            fetchedAt: Date()
         )
     }
 
     /// Просьба сервера главнее любых наших расчётов.
     @Test("Retry-After перебивает всё остальное")
     func retryAfterWins() {
-        let hot = snap(percent: 95, active: true)
+        let hot = snap(percent: 95)
         #expect(PollPlan.interval(snapshot: hot, failureStreak: 0, retryAfter: 300) == 300)
         #expect(PollPlan.interval(snapshot: hot, failureStreak: 9, retryAfter: 300) == 300)
         // Но чаще раза в минуту не ходим, даже если сервер разрешил.
@@ -760,22 +701,24 @@ struct PollPlanTests {
         #expect(PollPlan.interval(snapshot: hot, failureStreak: 0, retryAfter: 0) == 60)
     }
 
-    @Test("Окна нет: спрашиваем редко, меняться нечему")
-    func idleIsQuiet() {
-        #expect(PollPlan.interval(snapshot: snap(percent: 0, active: false),
-                                  failureStreak: 0, retryAfter: nil) == 900)
-    }
-
-    @Test("Окно горит: обычный темп, у лимита частый")
-    func activeScales() {
-        #expect(PollPlan.interval(snapshot: snap(percent: 10, active: true),
+    @Test("Обычный темп, у лимита частый")
+    func scalesWithPercent() {
+        #expect(PollPlan.interval(snapshot: snap(percent: 10),
                                   failureStreak: 0, retryAfter: nil) == 600)
-        #expect(PollPlan.interval(snapshot: snap(percent: 78, active: true),
+        #expect(PollPlan.interval(snapshot: snap(percent: 78),
                                   failureStreak: 0, retryAfter: nil) == 600)
         // С 79 начинается розовая зона, тут точность важнее экономии.
-        #expect(PollPlan.interval(snapshot: snap(percent: 79, active: true),
+        #expect(PollPlan.interval(snapshot: snap(percent: 79),
                                   failureStreak: 0, retryAfter: nil) == 120)
-        #expect(PollPlan.interval(snapshot: snap(percent: 99, active: true),
+        #expect(PollPlan.interval(snapshot: snap(percent: 99),
+                                  failureStreak: 0, retryAfter: nil) == 120)
+    }
+
+    /// Скоупный лимит по модели может упереться раньше общего: тогда точность
+    /// нужна ровно так же.
+    @Test("Горит скоупный: тоже частый опрос")
+    func scopedCounts() {
+        #expect(PollPlan.interval(snapshot: snap(percent: 85, kind: "weekly_scoped"),
                                   failureStreak: 0, retryAfter: nil) == 120)
     }
 
@@ -792,13 +735,13 @@ struct PollPlanTests {
         // Потолок: дальше не растём.
         #expect(PollPlan.backoff(previous: 3600) == 3600)
         // И эта пауза действительно перебивает частый опрос у лимита.
-        #expect(PollPlan.interval(snapshot: snap(percent: 95, active: true),
+        #expect(PollPlan.interval(snapshot: snap(percent: 95),
                                   failureStreak: 0, retryAfter: first) == 900)
     }
 
     @Test("Сеть лежит: не долбим")
     func brokenNetworkBacksOff() {
-        #expect(PollPlan.interval(snapshot: snap(percent: 95, active: true),
+        #expect(PollPlan.interval(snapshot: snap(percent: 95),
                                   failureStreak: 3, retryAfter: nil) == 900)
     }
 
@@ -812,12 +755,10 @@ struct PollPlanTests {
     func neverBelowMinimum() {
         for streak in [0, 1, 5] {
             for after in [nil, 0, 1, 30, 600] as [Int?] {
-                for active in [true, false] {
-                    for pct in [0, 50, 79, 100] {
-                        let v = PollPlan.interval(snapshot: snap(percent: pct, active: active),
-                                                  failureStreak: streak, retryAfter: after)
-                        #expect(v >= PollPlan.minimum)
-                    }
+                for pct in [0, 50, 79, 100] {
+                    let v = PollPlan.interval(snapshot: snap(percent: pct),
+                                              failureStreak: streak, retryAfter: after)
+                    #expect(v >= PollPlan.minimum)
                 }
             }
         }
@@ -1335,46 +1276,6 @@ struct LifetimeTokensTests {
     }
 }
 
-// MARK: - Будильник мака
-
-@Suite("Расписание пробуждения")
-struct WakeScheduleTests {
-
-    /// Регресс: команду считали от якоря как есть, и мак будился к концу окна.
-    /// Якорь 08:45 значит "к 8:45 окно уже закрылось", пинг за пять часов до,
-    /// то есть 03:45, а будить надо на две минуты раньше пинга.
-    @Test("Команда считается от якоря минус окно минус две минуты")
-    func command() {
-        #expect(WakeSchedule.command(anchorHour: 8, anchorMinute: 45)
-                == "sudo pmset repeat wakeorpoweron MTWRFSU 03:43:00")
-        #expect(WakeSchedule.command(anchorHour: 9, anchorMinute: 0)
-                == "sudo pmset repeat wakeorpoweron MTWRFSU 03:58:00")
-        // Через полночь уезжаем на прошлые сутки, а не в отрицательное время.
-        #expect(WakeSchedule.command(anchorHour: 3, anchorMinute: 0)
-                == "sudo pmset repeat wakeorpoweron MTWRFSU 21:58:00")
-        #expect(WakeSchedule.command(anchorHour: 0, anchorMinute: 0)
-                == "sudo pmset repeat wakeorpoweron MTWRFSU 18:58:00")
-    }
-
-    /// Настоящий вывод pmset -g sched с этой машины.
-    @Test("Разбор pmset -g sched")
-    func parse() {
-        let real = """
-        Repeating power events:
-          wakepoweron at 3:28AM every day
-        Scheduled power events:
-         [0]  wake at 07/24/2026 12:41:36 by 'com.apple.alarm.user-invisible'
-        """
-        #expect(WakeSchedule.scheduled(in: real) == "03:28")
-        #expect(WakeSchedule.scheduled(in: "wakepoweron at 3:43PM every day") == "15:43")
-        #expect(WakeSchedule.scheduled(in: "wakepoweron at 12:05AM every day") == "00:05")
-        #expect(WakeSchedule.scheduled(in: "wakepoweron at 12:05PM every day") == "12:05")
-        // Расписания нет: только разовые события или пусто.
-        #expect(WakeSchedule.scheduled(in: "Scheduled power events:\n [0]  wake at 07/24") == nil)
-        #expect(WakeSchedule.scheduled(in: "") == nil)
-    }
-}
-
 // MARK: - Недельный остаток в строке меню
 
 @Suite("Остаток недельного лимита")
@@ -1404,8 +1305,6 @@ struct WeeklyTimeTests {
         let parts = StatusBar.parts(from: snap, now: utc(2026, 7, 22, 12, 0))
         // Эталон: недельный сбрасывается 24 июля в 9pm Рига, это через 2 суток.
         #expect(parts.weeklyTime == "2d")
-        #expect(parts.time == "7h10")
-        #expect(parts.session == "26")
         #expect(parts.weekly == "83")
     }
 
@@ -1700,7 +1599,9 @@ struct ScanStateTests {
 
     @Test("Деньги за сегодня и за неделю из накопленных дней")
     func spendFromTotals() {
-        let now = StatsSlicer.isoDate("2026-07-31")!
+        // Полдень 31-го в поясе календаря теста: полночь по системному поясу
+        // уезжала на соседние сутки, стоило машине оказаться в другом поясе.
+        let now = utc(2026, 7, 31, 9, 0)
         var state = ScanState()
         state.totals["2026-07-31"] = .init(cost: ["Opus 4.8": 10, "Opus 5": 5], tokens: 1)
         state.totals["2026-07-28"] = .init(cost: ["Opus 4.8": 100], tokens: 1)
@@ -1713,7 +1614,9 @@ struct ScanStateTests {
 
     @Test("Часы отдаются только сегодняшние")
     func hoursAreTodayOnly() {
-        let now = StatsSlicer.isoDate("2026-07-31")!
+        // Полдень 31-го в поясе календаря теста: полночь по системному поясу
+        // уезжала на соседние сутки, стоило машине оказаться в другом поясе.
+        let now = utc(2026, 7, 31, 9, 0)
         var state = ScanState()
         state.hours["2026-07-31 14"] = ["Opus 4.8": 10]
         state.hours["2026-07-30 14"] = ["Opus 4.8": 99]
