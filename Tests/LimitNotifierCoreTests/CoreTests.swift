@@ -185,6 +185,11 @@ Last 24h · 276 requests · 4 sessions
   77% of your usage was at >150k context
   41% of your usage came from subagent-heavy sessions
   Top subagents: workflow-subagent 30%
+
+Last 7d · 404 requests · 8 sessions
+  76% of your usage was at >150k context
+  29% of your usage came from subagent-heavy sessions
+  Top subagents: workflow-subagent 21%
 """
 
 /// Июльский вывод, ещё с пятичасовым окном. Держим затем, чтобы вернись эта
@@ -561,6 +566,77 @@ struct CostTests {
     @Test("Пустой usage стоит ноль")
     func emptyUsage() {
         #expect(CostScanner.price(usage: [:], prices: Prices(input: 5, output: 25)) == 0)
+    }
+}
+
+@Suite("Что съедает лимит")
+struct InsightsTests {
+
+    @Test("Ноябрьский вывод: два окна со всеми полями")
+    func november() throws {
+        let insights = try #require(UsageInsights.parse(novemberOutput))
+        #expect(insights.windows.map(\.title) == ["Last 24h", "Last 7d"])
+
+        let day = insights.windows[0]
+        #expect(day.requests == 276 && day.sessions == 4)
+        #expect(day.behaviors.map(\.percent) == [77, 41])
+        #expect(day.subagents == [UsageInsights.Subagent(name: "workflow-subagent", percent: 30)])
+
+        let week = insights.windows[1]
+        #expect(week.requests == 404 && week.sessions == 8)
+        #expect(week.behaviors.map(\.percent) == [76, 29])
+        #expect(week.subagents.first?.percent == 21)
+    }
+
+    /// Раздел приходит в том же ответе, что и лимиты: отдельно его не спрашиваем.
+    @Test("Едет вместе со снимком лимитов")
+    func attachedToSnapshot() throws {
+        let snap = try #require(UsageClient.parse(novemberOutput, now: utc(2026, 11, 14, 1, 0)))
+        #expect(snap.insights?.windows.count == 2)
+    }
+
+    @Test("Июльский вывод: одно окно, одно поведение, без субагентов")
+    func july() throws {
+        let insights = try #require(UsageInsights.parse(realOutput))
+        #expect(insights.windows.count == 1)
+        #expect(insights.windows[0].requests == 1258)
+        #expect(insights.windows[0].behaviors.first?.percent == 95)
+        #expect(insights.windows[0].subagents.isEmpty)
+    }
+
+    @Test("Нет раздела, нет и сведений")
+    func absent() {
+        #expect(UsageInsights.parse("Current week (all models): 1% used · resets Nov 21 at 1am (Asia/Bangkok)") == nil)
+        #expect(UsageInsights.parse("") == nil)
+    }
+
+    @Test("Числа с запятой и несколько субагентов")
+    func commasAndList() throws {
+        let text = """
+        Last 7d · 12,345 requests · 1,002 sessions
+          Top subagents: workflow-subagent 21%, Explore 9%, general purpose 3%
+        """
+        let window = try #require(UsageInsights.parse(text)?.windows.first)
+        #expect(window.requests == 12345 && window.sessions == 1002)
+        #expect(window.subagents.map(\.name) == ["workflow-subagent", "Explore", "general purpose"])
+        #expect(window.subagents.map(\.percent) == [21, 9, 3])
+    }
+
+    @Test("Подписи: известные переводятся, незнакомые без служебного начала")
+    func labels() {
+        let was = L.lang
+        defer { L.lang = was }
+        let context = UsageInsights.Behavior(percent: 77, text: "was at >150k context")
+        let heavy = UsageInsights.Behavior(percent: 41, text: "came from subagent-heavy sessions")
+        let unknown = UsageInsights.Behavior(percent: 5, text: "was during peak hours")
+
+        L.lang = .ru
+        #expect(context.label == "контекст больше 150k")
+        #expect(heavy.label == "сессии с субагентами")
+        #expect(unknown.label == "during peak hours")
+        L.lang = .en
+        #expect(context.label == "context over 150k")
+        #expect(heavy.label == "subagent-heavy sessions")
     }
 }
 

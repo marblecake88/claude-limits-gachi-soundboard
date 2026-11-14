@@ -142,7 +142,7 @@ public struct UsageClient {
         }
 
         guard !rows.isEmpty else { return nil }
-        return UsageSnapshot(rows: rows, fetchedAt: now)
+        return UsageSnapshot(rows: rows, fetchedAt: now, insights: UsageInsights.parse(text))
     }
 
     /// "Current session" -> 5h, "Current week (all models)" -> Weekly,
@@ -204,5 +204,114 @@ public struct UsageClient {
             }
         }
         return nil
+    }
+}
+
+// MARK: - Что съедает лимит
+
+/// Раздел "What's contributing to your limits usage?" из того же вывода /usage.
+///
+/// Появился осенью 2026. Claude сам пишет, что цифры примерные и только по
+/// сессиям этой машины, а поведения независимые, это не разбивка на части:
+/// 77% с большим контекстом и 41% с субагентами могут пересекаться.
+///
+/// Приходит в том же ответе, что и лимиты, так что отдельных запросов не стоит.
+public struct UsageInsights: Sendable, Equatable {
+    public struct Window: Sendable, Equatable {
+        /// Как пишет claude: "Last 24h", "Last 7d".
+        public let title: String
+        public let requests: Int
+        public let sessions: Int
+        public let behaviors: [Behavior]
+        public let subagents: [Subagent]
+    }
+
+    /// "77% of your usage was at >150k context" -> 77, "was at >150k context".
+    public struct Behavior: Sendable, Equatable {
+        public let percent: Int
+        public let text: String
+
+        /// Короткая подпись. Известные формулировки переводим, незнакомые
+        /// показываем как есть, только без служебного начала фразы.
+        public var label: String {
+            let lower = text.lowercased()
+            if let range = lower.range(of: ">"), lower.contains("context") {
+                let size = lower[range.upperBound...].prefix { $0.isNumber || $0 == "k" || $0 == "m" }
+                if !size.isEmpty { return L.s("контекст больше \(size)", "context over \(size)") }
+            }
+            if lower.contains("subagent-heavy") {
+                return L.s("сессии с субагентами", "subagent-heavy sessions")
+            }
+            for lead in ["was at ", "came from ", "was in ", "was ", "came "] where lower.hasPrefix(lead) {
+                return String(text.dropFirst(lead.count))
+            }
+            return text
+        }
+    }
+
+    public struct Subagent: Sendable, Equatable {
+        public let name: String
+        public let percent: Int
+    }
+
+    public let windows: [Window]
+
+    /// nil, если раздела в выводе нет: на старых версиях claude его не было.
+    public static func parse(_ text: String) -> UsageInsights? {
+        var windows: [Window] = []
+        var title = "", requests = 0, sessions = 0
+        var behaviors: [Behavior] = [], subagents: [Subagent] = []
+        var open = false
+
+        func close() {
+            guard open else { return }
+            windows.append(Window(title: title, requests: requests, sessions: sessions,
+                                  behaviors: behaviors, subagents: subagents))
+            behaviors = []; subagents = []
+        }
+
+        for raw in text.split(separator: "\n", omittingEmptySubsequences: true) {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+
+            // Заголовок окна: "Last 24h · 276 requests · 4 sessions".
+            if line.hasPrefix("Last ") {
+                let parts = line.split(separator: "·").map { $0.trimmingCharacters(in: .whitespaces) }
+                guard parts.count >= 3 else { continue }
+                close()
+                title = parts[0]
+                requests = leadingNumber(parts[1])
+                sessions = leadingNumber(parts[2])
+                open = true
+                continue
+            }
+            guard open else { continue }
+
+            if let mark = line.range(of: "% of your usage ") {
+                let number = line[..<mark.lowerBound]
+                if let percent = Int(number) {
+                    behaviors.append(Behavior(percent: percent,
+                                              text: String(line[mark.upperBound...])))
+                }
+                continue
+            }
+
+            // "Top subagents: workflow-subagent 30%, Explore 12%".
+            if line.lowercased().hasPrefix("top subagent"), let colon = line.firstIndex(of: ":") {
+                for item in line[line.index(after: colon)...].split(separator: ",") {
+                    let words = item.trimmingCharacters(in: .whitespaces).split(separator: " ")
+                    guard words.count >= 2, let last = words.last, last.hasSuffix("%"),
+                          let percent = Int(last.dropLast()) else { continue }
+                    subagents.append(Subagent(name: words.dropLast().joined(separator: " "),
+                                              percent: percent))
+                }
+            }
+        }
+        close()
+        return windows.isEmpty ? nil : UsageInsights(windows: windows)
+    }
+
+    /// "1,258 requests" -> 1258.
+    private static func leadingNumber(_ text: String) -> Int {
+        Int(text.prefix { $0.isNumber || $0 == "," }.replacingOccurrences(of: ",", with: "")) ?? 0
     }
 }

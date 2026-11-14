@@ -8,7 +8,7 @@
 
 [English below](#english)
 
-<img src="docs/marquee.gif" width="408" alt="строка меню прокручивает имена проектов">
+<img src="docs/marquee.gif" width="315" alt="строка меню прокручивает имена проектов">
 
 Лимиты Claude Code в строке меню мака. Зовёт, когда claude в другом окне закончил работу.
 Считает токены и деньги. Заодно гачи-саундборд.
@@ -39,7 +39,10 @@
 **Статистика.** Жмёшь STATS, и панель разъезжается вправо: токены по дням, часам или
 неделям, карта активности за всё время, доли моделей, стрики. Плюс деньги по тарифам API,
 за сегодня, за неделю и за всё время, с разбивкой по моделям. Считается локально из
-транскриптов и кэша claude, цифры сходятся с его собственной вкладкой Stats. Транскрипты
+транскриптов и кэша claude, цифры сходятся с его собственной вкладкой Stats. Там же блок
+«Что ест лимит»: сам claude прикидывает, сколько запросов и сессий было за сутки и за
+неделю, какая доля работы шла с контекстом больше 150k и с субагентами, и какой субагент
+самый прожорливый. Транскрипты
 дочитываются с того места, где остановились в прошлый раз, поэтому панель открывается сразу
 с готовыми цифрами, а сегодняшний день обновляется на глазах, пока она открыта.
 
@@ -150,7 +153,9 @@ looking at that window, the app stays quiet.
 **Statistics.** Hit STATS and the panel expands to the right: tokens per day, hour or week,
 an activity map for all time, model shares, streaks. Plus spend at API rates for today, the
 week and all time, broken down by model. Computed locally from transcripts and claude's own
-cache, and the numbers match its Stats tab. Transcripts are read from where the last pass
+cache, and the numbers match its Stats tab. Next to it, "What eats the limit": claude's own
+estimate of requests and sessions over the day and the week, how much of the work ran with
+over 150k of context or with subagents, and which subagent is the hungriest. Transcripts are read from where the last pass
 stopped, so the pane opens with the numbers already there, and today keeps updating while you
 watch it.
 

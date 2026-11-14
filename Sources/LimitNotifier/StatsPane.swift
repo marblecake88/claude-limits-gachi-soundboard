@@ -37,6 +37,10 @@ struct StatsPane: View {
                 bottom(s)
                 Divider().overlay(StatsPalette.line).padding(.vertical, 10)
                 money()
+                if let data = model.snapshot?.insights {
+                    Divider().overlay(StatsPalette.line).padding(.vertical, 10)
+                    insights(data)
+                }
                 Divider().overlay(StatsPalette.line).padding(.vertical, 10)
                 record()
             }
@@ -314,6 +318,104 @@ struct StatsPane: View {
     /// Центы важны на мелких суммах, на крупных это шум.
     private func money(_ value: Double) -> String {
         value >= 100 ? String(format: "$%.0f", value) : String(format: "$%.2f", value)
+    }
+
+    // MARK: Что съедает лимит
+
+    /// Ширина колонки одного окна: "███████░ 77%" плюс запас.
+    private static let insightColumn: CGFloat = 118
+
+    /// Раздел из /usage, где claude сам говорит, что ест лимит. Окон обычно
+    /// два, сутки и неделя, ставим их рядом колонками: так видно, изменилось
+    /// ли что-то за последний день против недели.
+    private func insights(_ data: UsageInsights) -> some View {
+        let windows = Array(data.windows.prefix(2))
+        return VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 0) {
+                Text(L.s("ЧТО ЕСТ ЛИМИТ", "WHAT EATS THE LIMIT"))
+                    .font(StatsMetrics.font).tracking(0.9)
+                    .foregroundStyle(StatsPalette.key)
+                Spacer(minLength: 6)
+                ForEach(windows.indices, id: \.self) { i in
+                    Text(Self.windowTitle(windows[i].title))
+                        .font(StatsMetrics.small).tracking(0.8)
+                        .foregroundStyle(StatsPalette.key)
+                        .frame(width: Self.insightColumn, alignment: .trailing)
+                }
+            }
+            insightRow(L.s("запросов · сессий", "requests · sessions"),
+                       windows.map { "\($0.requests) · \($0.sessions)" })
+            ForEach(Self.behaviorTexts(windows), id: \.self) { text in
+                behaviorRow(text, windows)
+            }
+            if windows.contains(where: { !$0.subagents.isEmpty }) {
+                insightRow(L.s("главный субагент", "top subagent"), windows.map { window in
+                    window.subagents.first.map { "\($0.name) \($0.percent)%" } ?? "--"
+                })
+            }
+            // Claude сам пишет, что это приблизительно и только по этой машине,
+            // а поведения пересекаются и в сумме не дают сто процентов.
+            Text(L.s("примерно и только по этой машине, проценты пересекаются",
+                     "approximate, this machine only, percentages overlap"))
+                .font(StatsMetrics.tiny).foregroundStyle(StatsPalette.faint)
+        }
+    }
+
+    private func insightRow(_ key: String, _ values: [String]) -> some View {
+        HStack(spacing: 0) {
+            Text(key).font(StatsMetrics.small).foregroundStyle(StatsPalette.key)
+                .lineLimit(1)
+            Spacer(minLength: 6)
+            ForEach(values.indices, id: \.self) { i in
+                Text(values[i]).font(StatsMetrics.small).monospacedDigit()
+                    .foregroundStyle(StatsPalette.value)
+                    .lineLimit(1).minimumScaleFactor(0.75)
+                    .frame(width: Self.insightColumn, alignment: .trailing)
+            }
+        }
+    }
+
+    private func behaviorRow(_ text: String, _ windows: [UsageInsights.Window]) -> some View {
+        let label = windows.lazy.flatMap(\.behaviors).first { $0.text == text }?.label ?? text
+        return HStack(spacing: 0) {
+            Text(label).font(StatsMetrics.small).foregroundStyle(StatsPalette.key)
+                .lineLimit(1).minimumScaleFactor(0.8)
+            Spacer(minLength: 6)
+            ForEach(windows.indices, id: \.self) { i in
+                Group {
+                    if let behavior = windows[i].behaviors.first(where: { $0.text == text }) {
+                        let bars = Gauge.bars(percent: behavior.percent, width: 8)
+                        (Text(bars.filled).foregroundStyle(StatsPalette.accent)
+                         + Text(bars.empty).foregroundStyle(StatsPalette.empty)
+                         + Text(" \(behavior.percent)%").foregroundStyle(StatsPalette.value))
+                    } else {
+                        Text("--").foregroundStyle(StatsPalette.faint)
+                    }
+                }
+                .font(StatsMetrics.small).monospacedDigit()
+                .frame(width: Self.insightColumn, alignment: .trailing)
+            }
+        }
+    }
+
+    /// Наборы строк в окнах могут не совпадать: собираем общий список по
+    /// порядку появления, а где строки нет, ставим прочерк.
+    private static func behaviorTexts(_ windows: [UsageInsights.Window]) -> [String] {
+        var texts: [String] = []
+        for window in windows {
+            for behavior in window.behaviors where !texts.contains(behavior.text) {
+                texts.append(behavior.text)
+            }
+        }
+        return texts
+    }
+
+    /// "Last 24h" -> "СУТКИ", "Last 7d" -> "7 ДНЕЙ". Незнакомое как есть.
+    private static func windowTitle(_ title: String) -> String {
+        let lower = title.lowercased()
+        if lower.hasSuffix("24h") { return L.s("СУТКИ", "24H") }
+        if lower.hasSuffix("7d") { return L.s("7 ДНЕЙ", "7 DAYS") }
+        return title.uppercased()
     }
 
     // MARK: Рекорд одной строкой

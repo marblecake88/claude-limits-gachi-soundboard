@@ -61,10 +61,13 @@ public enum Level: String, Sendable, Equatable {
 public struct UsageSnapshot: Sendable, Equatable {
     public let rows: [LimitRow]
     public let fetchedAt: Date
+    /// Что съедает лимит, по словам самого claude. Приходит в том же ответе.
+    public let insights: UsageInsights?
 
-    public init(rows: [LimitRow], fetchedAt: Date) {
+    public init(rows: [LimitRow], fetchedAt: Date, insights: UsageInsights? = nil) {
         self.rows = rows
         self.fetchedAt = fetchedAt
+        self.insights = insights
     }
 
     /// Общий недельный лимит, по всем моделям. Именно он стоит в строке меню,
